@@ -236,14 +236,34 @@ def cmd_sync(args) -> int:
     import sync
 
     store = Store()
-    if args.action == "setup":
+    action = getattr(args, "action", "status")
+    quiet = bool(getattr(args, "quiet", False))
+
+    if action == "setup":
         ok, msg = sync.setup(args.url, args.path)
-        print(msg)
+        if not quiet:
+            print(msg)
         return 0 if ok else 1
-    if args.action == "run":
-        ok, msg = sync.run(store, dry_run=getattr(args, "dry_run", False))
-        print(msg)
+
+    if action == "run":
+        ok, msg = sync.run(store, dry_run=getattr(args, "dry_run", False), quiet=quiet)
+        if not quiet:
+            print(msg)
         return 0 if ok else 1
+
+    if action == "autostart":
+        mode = getattr(args, "mode", "status")
+        if mode == "install":
+            ok, msg = sync.install_task(minutes=int(getattr(args, "minutes", 30) or 30))
+        elif mode == "remove":
+            ok, msg = sync.remove_task()
+        else:
+            print(sync.task_status_text())
+            return 0
+        if not quiet:
+            print(msg)
+        return 0 if ok else 1
+
     print(sync.status(store))
     return 0
 
@@ -440,10 +460,14 @@ def main(argv=None) -> int:
     s.set_defaults(func=cmd_web)
 
     s = sub.add_parser("sync", help="跨机器数据同步（GitHub 私有数据仓）")
-    s.add_argument("action", choices=["setup", "run", "status"])
+    s.add_argument("action", choices=["setup", "run", "status", "autostart"])
     s.add_argument("url", nargs="?", help="数据仓库地址（setup 时用）")
     s.add_argument("--path", help="本地数据仓库目录")
     s.add_argument("--dry-run", action="store_true", help="只演练，不真的提交推送")
+    s.add_argument("--quiet", action="store_true", help="不打印结果（计划任务用）")
+    s.add_argument("--mode", choices=["install", "remove", "status"], default="install",
+                   help="autostart 的动作：装/卸计划任务")
+    s.add_argument("--minutes", type=int, default=30, help="自动同步间隔（分钟），默认 30")
     s.set_defaults(func=cmd_sync)
 
     s = sub.add_parser("machine", help="查看 / 修改本机身份")

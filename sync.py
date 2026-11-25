@@ -18,6 +18,8 @@ import json
 import os
 import shutil
 import subprocess
+import sys
+import time
 from pathlib import Path
 
 BASE_DIR = Path(__file__).resolve().parent
@@ -66,7 +68,12 @@ def repo_dir() -> Path:
 # ---------------------------------------------------------------- git 封装
 
 
-def git(repo: Path, *args: str, check: bool = False) -> tuple[int, str]:
+def git(repo: Path, *args: str, check: bool = False, timeout: int = 90) -> tuple[int, str]:
+    """跑一条 git 命令。
+
+    stdin 一定要接 DEVNULL —— 否则 git 遇到需要输入的提示（要用户名/密码）会
+    一直等终端输入，表现为整个同步卡死。认证交给 Git Credential Manager 自己处理。
+    """
     try:
         r = subprocess.run(
             ["git", "-C", str(repo), *args],
@@ -74,6 +81,8 @@ def git(repo: Path, *args: str, check: bool = False) -> tuple[int, str]:
             text=True,
             encoding="utf-8",
             errors="replace",
+            stdin=subprocess.DEVNULL,
+            timeout=timeout,
         )
         out = (r.stdout or "") + (r.stderr or "")
         if check and r.returncode != 0:
@@ -81,11 +90,25 @@ def git(repo: Path, *args: str, check: bool = False) -> tuple[int, str]:
         return r.returncode, out
     except FileNotFoundError:
         return 127, "找不到 git，请先安装 Git for Windows"
+    except subprocess.TimeoutExpired:
+        return 124, f"git {' '.join(args)} 超时（{timeout}秒）——网络不通或被卡住了"
 
 
 def git_ok(repo: Path, *args: str) -> bool:
     code, _ = git(repo, *args)
     return code == 0
+
+
+def git_retry(repo: Path, *args: str, tries: int = 3, timeout: int = 90) -> tuple[int, str, int]:
+    """网络抽风时重试几次。返回 (退出码, 输出, 实际尝试次数)。"""
+    code, out = 1, ""
+    for i in range(tries):
+        code, out = git(repo, *args, timeout=timeout)
+        if code == 0:
+            return 0, out, i + 1
+        if i < tries - 1:
+            time.sleep(3 * (i + 1))
+    return code, out, tries
 
 
 # ---------------------------------------------------------------- 事件合并
@@ -157,6 +180,12 @@ def setup(url: str | None = None, repo_path: str | None = None) -> tuple[bool, s
             git(repo, "symbolic-ref", "HEAD", "refs/heads/main")
     git_ok(repo, "symbolic-ref", "HEAD", "refs/heads/main")
 
+    # 网络不稳时别死等：低速就放弃，下一轮再试
+    git(repo, "config", "http.lowSpeedLimit", "1000")
+    git(repo, "config", "http.lowSpeedTime", "30")
+    git(repo, "config", "http.postBuffer", "524288000")
+    git(repo, "config", "core.sshCommand", "ssh -o ConnectTimeout=15")
+
     # 数据仓库只要能提交就行，不强制用 GitHub 身份（代码仓才需要）
     code, name = git(repo, "config", "user.name")
     if code != 0 or not name.strip():
@@ -172,8 +201,13 @@ def setup(url: str | None = None, repo_path: str | None = None) -> tuple[bool, s
         git(repo, "remote", "add", "origin", cfg["repo"])
 
     keep = repo / ".gitignore"
-    if not keep.exists():
-        keep.write_text("*\n!.gitignore\n!README.md\n*.jsonl\n", encoding="utf-8")
+    want = "*\n!.gitignore\n!README.md\n!*.jsonl\n"
+    # 注意：放行规则必须放在最后，且不能有把 jsonl 重新忽略掉的规则
+    # （.gitignore 里后面的规则优先，写成 `*.jsonl` 会把 `!*.jsonl` 覆盖掉，
+    #   结果就是数据文件永远不被提交 —— 这坑踩过）
+    if not keep.exists() or keep.read_text(encoding="utf-8").strip() != want.strip():
+        keep.write_text(want, encoding="utf-8")
+        print("· 修正了数据仓库的 .gitignore（放行 *.jsonl）")
     readme = repo / "README.md"
     if not readme.exists():
         readme.write_text(
@@ -197,13 +231,54 @@ def setup(url: str | None = None, repo_path: str | None = None) -> tuple[bool, s
     )
 
 
-def run(store, dry_run: bool = False) -> tuple[bool, str]:
+def run(store, dry_run: bool = False, quiet: bool = False) -> tuple[bool, str]:
     cfg = load_sync_config()
     if not cfg.get("repo"):
         return False, "还没配置数据仓库。先跑：python timelog.py sync setup <仓库地址>"
     repo = repo_dir()
     if not (repo / ".git").exists():
         return False, f"本地数据仓库不存在：{repo}\n先跑：python timelog.py sync setup <仓库地址>"
+
+    # 防止两次同步撞车（计划任务 + 手动同时跑）
+    lock = store.data_dir / "sync.lock"
+    if lock.exists():
+        try:
+            age = time.time() - lock.stat().st_mtime
+            if age < 900:
+                return True, f"上一次同步还没结束（{int(age)} 秒前开始），这次跳过"
+        except OSError:
+            pass
+    try:
+        lock.write_text(str(os.getpid()), encoding="utf-8")
+    except OSError:
+        lock = None
+
+    try:
+        ok, msg = _run_locked(store, repo, cfg, dry_run)
+    finally:
+        if lock and lock.exists():
+            try:
+                lock.unlink()
+            except OSError:
+                pass
+    _log(store, msg, ok)
+    if quiet:
+        return ok, msg
+    return ok, msg
+
+
+def _log(store, msg: str, ok: bool) -> None:
+    """写一份文件日志 —— 计划任务跑的时候没有控制台，得靠它排查。"""
+    try:
+        p = store.data_dir / "sync.log"
+        stamp = dt.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        with open(p, "a", encoding="utf-8") as f:
+            f.write(f"--- {stamp} {'成功' if ok else '失败'} ---\n{msg}\n")
+    except OSError:
+        pass
+
+
+def _run_locked(store, repo, cfg, dry_run: bool) -> tuple[bool, str]:
 
     lines: list[str] = []
     mine_id = store.machine["id"]
@@ -227,9 +302,12 @@ def run(store, dry_run: bool = False) -> tuple[bool, str]:
             lines.append(f"提交时有点小问题（可忽略）：{out.strip().splitlines()[-1] if out.strip() else ''}")
 
     # 3) 拉取别人的数据
-    code, out = git(repo, "pull", "--rebase", "--autostash")
+    code, out, tries = git_retry(repo, "pull", "--rebase", "--autostash")
     pulled = "Already up to date" in out
-    lines.append(f"拉取远端：{'没有新东西' if pulled else '拉到更新'}")
+    if tries > 1:
+        lines.append(f"拉取远端：网络不稳，重试了 {tries - 1} 次才成功")
+    else:
+        lines.append(f"拉取远端：{'没有新东西' if pulled else '拉到更新'}")
 
     # 4) 仓库 → 本地（自己那份做并集合并，不丢数据）
     received = 0
@@ -278,7 +356,7 @@ def run(store, dry_run: bool = False) -> tuple[bool, str]:
     code, out = git(repo, "commit", "-m", f"merge {dt.datetime.now():%Y-%m-%d %H:%M}")
     if code != 0 and "nothing to commit" not in out.lower():
         lines.append(f"提交时有点小问题：{out.strip().splitlines()[-1] if out.strip() else ''}")
-    code, out = git(repo, "push", "-u", "origin", "main")
+    code, out, tries = git_retry(repo, "push", "-u", "origin", "main")
     if code != 0:
         msg = out.strip()
         if "could not read Username" in msg or "Authentication failed" in msg or "403" in msg:
@@ -290,7 +368,7 @@ def run(store, dry_run: bool = False) -> tuple[bool, str]:
         else:
             lines.append(f"推送失败：{msg.splitlines()[-1] if msg else '未知错误'}")
         return False, "\n".join(lines)
-    lines.append("推送：完成 ✓")
+    lines.append("推送：完成 ✓" + (f"（重试了 {tries - 1} 次）" if tries > 1 else ""))
 
     cfg["last_sync"] = dt.datetime.now().isoformat(timespec="seconds")
     save_sync_config(cfg)
@@ -320,4 +398,140 @@ def status(store) -> str:
         by_machine.setdefault(name, []).append(f.name)
     for name, files in sorted(by_machine.items()):
         lines.append(f"  {name}：{len(files)} 天（{files[0].split('.')[0]} ~ {files[-1].split('.')[0]}）")
+    lines.append("")
+    lines.append("自动同步：" + task_status_text())
     return "\n".join(lines)
+
+
+# ---------------------------------------------------------------- 自动同步（计划任务）
+
+
+TASK_MINUTE = "TimelogSync"
+TASK_LOGON = "TimelogSyncAtLogon"
+RUN_KEY = r"Software\Microsoft\Windows\CurrentVersion\Run"
+RUN_NAME = "TimelogSyncAtLogon"
+
+
+def _pythonw() -> str:
+    exe = Path(sys.executable)
+    if exe.name.lower() == "python.exe":
+        cand = exe.with_name("pythonw.exe")
+        if cand.exists():
+            return str(cand)
+    return sys.executable
+
+
+def _task_cmd() -> str:
+    """计划任务要执行的命令。用 pythonw 免得每 30 分钟闪一个黑框。"""
+    return f'cmd /c ""{_pythonw()}" "{BASE_DIR / "timelog.py"}" sync run --quiet"'
+
+
+def _schtasks(*args: str) -> tuple[int, str]:
+    try:
+        r = subprocess.run(
+            ["schtasks", *args], capture_output=True, text=True,
+            encoding="utf-8", errors="replace", stdin=subprocess.DEVNULL, timeout=60,
+        )
+        return r.returncode, (r.stdout or "") + (r.stderr or "")
+    except FileNotFoundError:
+        return 127, "找不到 schtasks"
+    except subprocess.TimeoutExpired:
+        return 124, "schtasks 超时"
+
+
+def _task_exists(name: str) -> bool:
+    code, _ = _schtasks("/query", "/tn", name)
+    return code == 0
+
+
+def install_task(minutes: int = 30) -> tuple[bool, str]:
+    """装两个自动同步触发器：每隔 N 分钟同步一次 + 每次登录时同步一次。
+
+    「每 N 分钟」用计划任务（schtasks）；
+    「登录时」用注册表 Run 键 —— 因为 schtasks 的 onlogon 触发器要管理员权限，
+    普通用户会被 "Access is denied" 拒掉，而注册表 HKCU 不需要提权。
+    """
+    cmd = _task_cmd()
+    out = []
+    code, msg = _schtasks(
+        "/create", "/tn", TASK_MINUTE, "/tr", cmd, "/sc", "minute", "/mo", str(minutes), "/f"
+    )
+    if code != 0:
+        return False, f"建每 {minutes} 分钟的任务失败：\n{msg.strip()}"
+    out.append(f"✓ 每 {minutes} 分钟同步一次（计划任务 {TASK_MINUTE}）")
+
+    code, msg = _reg_run_set(RUN_NAME, cmd)
+    if code == 0:
+        out.append(f"✓ 每次登录时同步一次（注册表 Run\\{RUN_NAME}）")
+    else:
+        out.append(f"（登录时同步那个没建成：{msg.strip()[:120]}）")
+
+    out.append("")
+    out.append("触发时执行的命令：")
+    out.append(f"  {cmd}")
+    out.append("")
+    out.append("卸载：python timelog.py sync autostart --mode remove")
+    return True, "\n".join(out)
+
+
+def _reg_run_set(name: str, cmd: str) -> tuple[int, str]:
+    try:
+        import winreg
+
+        key = winreg.OpenKey(winreg.HKEY_CURRENT_USER, RUN_KEY, 0, winreg.KEY_ALL_ACCESS)
+        with key:
+            winreg.SetValueEx(key, name, 0, winreg.REG_SZ, cmd)
+        return 0, ""
+    except Exception as exc:
+        return 1, str(exc)
+
+
+def _reg_run_del(name: str) -> tuple[int, str]:
+    try:
+        import winreg
+
+        key = winreg.OpenKey(winreg.HKEY_CURRENT_USER, RUN_KEY, 0, winreg.KEY_ALL_ACCESS)
+        with key:
+            try:
+                winreg.DeleteValue(key, name)
+            except FileNotFoundError:
+                pass
+        return 0, ""
+    except Exception as exc:
+        return 1, str(exc)
+
+
+def _reg_run_exists(name: str) -> bool:
+    try:
+        import winreg
+
+        key = winreg.OpenKey(winreg.HKEY_CURRENT_USER, RUN_KEY, 0, winreg.KEY_READ)
+        with key:
+            winreg.QueryValueEx(key, name)
+        return True
+    except Exception:
+        return False
+
+
+def remove_task() -> tuple[bool, str]:
+    out = []
+    for name in (TASK_MINUTE, TASK_LOGON):
+        if _task_exists(name):
+            code, msg = _schtasks("/delete", "/tn", name, "/f")
+            if code == 0:
+                out.append(f"✓ 已删除计划任务 {name}")
+            else:
+                out.append(f"✗ 删除 {name} 失败：{msg.strip()[:120]}")
+        else:
+            out.append(f"· 计划任务 {name} 本来就没有")
+    code, msg = _reg_run_del(RUN_NAME)
+    out.append("✓ 已删除注册表登录触发器" if code == 0 else f"· 删除注册表项失败：{msg[:100]}")
+    return True, "\n".join(out)
+
+
+def task_status_text() -> str:
+    parts = []
+    for name in (TASK_MINUTE,):
+        parts.append(f"每 N 分钟同步：{'已装' if _task_exists(name) else '未装'}")
+    parts.append(f"登录时同步：{'已装' if _reg_run_exists(RUN_NAME) else '未装'}")
+    return "，".join(parts)
