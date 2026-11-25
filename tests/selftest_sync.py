@@ -172,8 +172,8 @@ def test_sync_roundtrip():
 
     import sync
 
-    # --- 机器 A ---
-    dA = use_machine(1, "台式机", "aaaaaa")
+    # --- 机器 A ---（用独立的目录编号，别和前面用例的残留文件混在一起）
+    dA = use_machine(10, "台式机", "aaaaaa")
     storeA = __import__("store").Store()
     storeA.append({"kind": "window", "app": "Code.exe", "title": "A的活儿"}, T(9, 0))
     storeA.append({"kind": "end"}, T(10, 0))
@@ -183,7 +183,7 @@ def test_sync_roundtrip():
     check("A 首次同步成功（推上去）", ok, msg[-400:])
 
     # --- 机器 B ---
-    dB = use_machine(2, "笔记本", "bbbbbb")
+    dB = use_machine(11, "笔记本", "bbbbbb")
     storeB = __import__("store").Store()
     ok, msg = sync.setup(str(remote), str(SANDBOX / "repoB"))
     check("B 配置数据仓库", ok, msg[:200])
@@ -202,7 +202,7 @@ def test_sync_roundtrip():
     check("B 推送成功", ok, msg[-400:])
 
     # --- 回到 A ---
-    use_machine(1, "台式机", "aaaaaa")
+    use_machine(10, "台式机", "aaaaaa")
     storeA = __import__("store").Store()
     ok, msg = sync.run(storeA)
     check("A 再同步成功（拉到 B 的数据）", ok, msg[-400:])
@@ -210,7 +210,8 @@ def test_sync_roundtrip():
     check("A 收到了 B 的数据文件", any(".bbbbbb." in f for f in filesA), f"实际 {filesA}")
 
     _, s, _ = merged_summary()
-    check("A 合并后能看到两台机器的活跃时间", s["window"] >= 10800 + 3600 - 1, f"实际 {s['window']}")
+    # A 的段 09:00-10:00（1 小时）+ B 的段 14:00-15:00（1 小时）= 2 小时
+    check("A 合并后能看到两台机器的活跃时间", s["window"] >= 7200, f"实际 {s['window']}")
     check("A 合并后识别出 2 台设备", len(s["by_machine"]) == 2, f"实际 {list(s['by_machine'])}")
 
     # 报告能正常生成

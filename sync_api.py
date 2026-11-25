@@ -178,33 +178,41 @@ def run(store, dry_run: bool = False) -> tuple[bool, str]:
     base = f"/repos/{owner}/{repo}/contents"
     lines: list[str] = []
 
-    # 1) 列远端文件
-    code, listing = call_retry("GET", base + "/", tok)
-    if code == 404:
-        # 空仓库列目录就返回 404「This repository is empty.」—— 当成空列表，不是错误
-        msg = str(listing.get("message", ""))
-        if "empty" in msg.lower():
-            listing = []
-        else:
-            return False, f"读不到远端仓库（{code}）：{msg}"
-    elif code != 200:
-        return False, f"读不到远端仓库（{code}）：{listing.get('message', listing)}"
-    remote = {x["name"]: x for x in listing if x.get("name", "").endswith(".jsonl")}
-    lines.append(f"远端有 {len(remote)} 个数据文件")
+    def list_remote() -> dict:
+        code, listing = call_retry("GET", base + "/", tok)
+        if code == 404:
+            # 空仓库列目录就返回 404「This repository is empty.」—— 当成空列表，不是错误
+            msg = str(listing.get("message", ""))
+            if "empty" in msg.lower():
+                return {}
+            raise RuntimeError(f"读不到远端仓库（{code}）：{msg}")
+        if code != 200:
+            raise RuntimeError(f"读不到远端仓库（{code}）：{listing.get('message', listing)}")
+        return {x["name"]: x for x in listing if x.get("name", "").endswith(".jsonl")}
 
-    # 2) 拉别人的文件（本地没有才下；有就并集合并）
-    pulled = 0
-    for name, meta in remote.items():
-        dst = store.data_dir / name
-        if not dst.exists():
+    def pull_new(remote: dict) -> int:
+        """把远端有、本地没有的文件拉回来。"""
+        got = 0
+        for name in remote:
+            dst = store.data_dir / name
+            if dst.exists():
+                continue
             if dry_run:
-                pulled += 1
+                got += 1
                 continue
             code, content = call_retry("GET", f"{base}/{name}", tok)
             if code == 200 and content.get("content"):
                 raw = base64.b64decode(content["content"]).decode("utf-8", errors="replace")
                 dst.write_text(raw, encoding="utf-8")
-                pulled += 1
+                got += 1
+        return got
+
+    # 1) 列远端文件
+    remote = list_remote()
+    lines.append(f"远端有 {len(remote)} 个数据文件")
+
+    # 2) 拉别人的文件（本地没有才下）
+    pulled = pull_new(remote)
     lines.append(f"仓库 → 本地：新拉回 {pulled} 个文件")
 
     # 3) 推自己的文件
@@ -248,6 +256,17 @@ def run(store, dry_run: bool = False) -> tuple[bool, str]:
                 if code3 in (200, 201):
                     pushed += 1
     lines.append(f"本地 → 仓库：上传 {pushed} 个文件")
+
+    # 3.5) 再列一次：GitHub 的文件列表有延迟 —— 对方刚推上来的文件
+    #      在第一次列表里可能还没出现，这里补拉一次，避免漏数据。
+    if not dry_run:
+        try:
+            remote2 = list_remote()
+            extra = pull_new(remote2)
+            if extra:
+                lines.append(f"补拉（列表延迟）：又拉回 {extra} 个文件")
+        except RuntimeError as exc:
+            lines.append(f"补拉时出了点问题（不影响已完成的部分）：{exc}")
 
     # 4) 重算报告
     if not dry_run:

@@ -232,6 +232,13 @@ def setup(url: str | None = None, repo_path: str | None = None, transport: str |
         )
 
     code, out = git(repo, "remote", "-v")
+
+    # 基础文件单独提交一次：两台机器各自建仓时都会新增同样的 .gitignore / README，
+    # 如果混在第一次提交里，rebase 时会撞 add/add 冲突。分开提交后，
+    # 这份基础提交在另一台机器看来是"已应用过"，会被自动跳过。
+    git(repo, "add", "--", ".gitignore", "README.md")
+    git(repo, "commit", "-m", "init: 数据仓库结构")
+
     return True, (
         f"数据仓库已就绪：{repo}\n"
         f"远端：{cfg['repo']}\n\n"
@@ -330,20 +337,26 @@ def _run_locked(store, repo, cfg, dry_run: bool) -> tuple[bool, str]:
             copied += 1
     lines.append(f"本地 → 仓库：{copied} 个文件有变化")
 
-    # 2) 提交本地改动
+    # 2) 提交本地改动（只提交数据文件，基础文件在 setup 时已单独提交过）
     if not dry_run:
-        git(repo, "add", "-A")
+        git(repo, "add", "--", "*.jsonl")
         code, out = git(repo, "commit", "-m", f"sync {dt.datetime.now():%Y-%m-%d %H:%M}")
         if code != 0 and "nothing to commit" not in out.lower():
             lines.append(f"提交时有点小问题（可忽略）：{out.strip().splitlines()[-1] if out.strip() else ''}")
 
     # 3) 拉取别人的数据
-    code, out, tries = git_retry(repo, "pull", "--rebase", "--autostash")
-    pulled = "Already up to date" in out
-    if tries > 1:
+    # 必须显式写 origin main：第一次同步时本地还没设过 upstream，
+    # 光写 `git pull --rebase` 会因为"no tracking information"拉不到东西，
+    # 后面 push 就被拒（非快进）。每台机器写的是自己的文件，不会真冲突。
+    code, out, tries = git_retry(repo, "pull", "origin", "main", "--rebase", "--autostash")
+    if code != 0:
+        git(repo, "rebase", "--abort")  # 万一停在冲突状态，清干净
+        last = out.strip().splitlines()[-1] if out.strip() else ""
+        lines.append(f"拉取远端：失败（{last}）")
+    elif tries > 1:
         lines.append(f"拉取远端：网络不稳，重试了 {tries - 1} 次才成功")
     else:
-        lines.append(f"拉取远端：{'没有新东西' if pulled else '拉到更新'}")
+        lines.append(f"拉取远端：{'没有新东西' if 'Already up to date' in out else '拉到更新'}")
 
     # 4) 仓库 → 本地（自己那份做并集合并，不丢数据）
     received = 0
@@ -388,7 +401,7 @@ def _run_locked(store, repo, cfg, dry_run: bool) -> tuple[bool, str]:
         lines.append("（--dry-run：没有真的提交和推送）")
         return True, "\n".join(lines)
 
-    git(repo, "add", "-A")
+    git(repo, "add", "--", "*.jsonl")
     code, out = git(repo, "commit", "-m", f"merge {dt.datetime.now():%Y-%m-%d %H:%M}")
     if code != 0 and "nothing to commit" not in out.lower():
         lines.append(f"提交时有点小问题：{out.strip().splitlines()[-1] if out.strip() else ''}")

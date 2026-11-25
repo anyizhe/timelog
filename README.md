@@ -94,6 +94,8 @@ python timelog.py report weekly     :: 生成本周周报
 | `python timelog.py sync setup <仓库地址>` | 配置跨机器数据同步（首次） |
 | `python timelog.py sync run` | 同步一次：拉取别人的 + 推自己的 + 重算报告 |
 | `python timelog.py sync status` | 看同步状态和各机器的数据 |
+| `python timelog.py sync autostart --mode install` | 装自动同步（每 30 分钟 + 登录时） |
+| `python timelog.py sync autostart --mode remove` | 卸载自动同步 |
 | `python timelog.py machine --name 台式机` | 给这台机器起名 |
 | `python timelog.py config` | 查看当前配置 |
 | `python timelog.py doctor` | 自检（能不能拿到窗口标题、目录能不能写） |
@@ -161,13 +163,27 @@ python timelog.py sync autostart --mode remove
 
 ### ⚠️ 关于网络
 
-国内访问 GitHub 时好时坏。工具已经做了三件事应对：
+国内访问 GitHub 时好时坏。工具为此做了四件事：
 
 - git 子进程**不继承 stdin**（否则会卡在等凭据提示上）、带 90 秒超时
 - 网络失败**自动重试 3 次**
 - 数据仓库配了 `http.lowSpeedLimit`，网速太慢就放弃等下一轮
+- **git 通道走不通时自动降级到 API 通道**（见下）
 
-所以偶尔会在 `sync.log` 里看到「网络不稳，重试了 N 次」，是正常的。
+### 两条同步通道
+
+| 通道 | 怎么走 | 什么时候用 |
+|---|---|---|
+| **git**（默认） | 本地 git 仓库 ↔ GitHub 私有仓 | 有 VPN、网络正常时。有版本历史，仓库页面能直接看 |
+| **api** | 直接调 GitHub REST API 读写文件 | 不开 VPN 时（`api.github.com` 通常比 git 端口稳）。无状态，更简单 |
+
+默认走 git，**失败会自动改走 API**，所以断网时每天的同步也不会断。想固定用哪条：
+
+```bat
+python timelog.py sync setup <仓库地址> --transport api
+```
+
+API 通道把文件直接写进同一个仓库，GitHub 那边照样能看到版本历史。
 
 ### 合并规则（重要）
 
@@ -258,9 +274,11 @@ timelog/
 ├── web.py            网页看板服务 + JSON API
 ├── ui/index.html     看板前端（单文件，零依赖）
 ├── machine.py        本机身份（机器号 + 名字）
-├── sync.py           跨机器数据同步（GitHub 私有数据仓）
+├── sync.py           跨机器数据同步（git 通道）
+├── sync_api.py       跨机器数据同步（API 通道，git 走不通时自动顶上）
 ├── publish.py        一键发布到 GitHub
-├── setup.py          新电脑安装引导
+├── join.py           新电脑一键接入
+├── setup.py          新电脑安装引导（手动版）
 ├── shortcut.py       桌面快捷方式
 ├── config.py         配置读取
 ├── config.json       配置（自己改）
@@ -278,13 +296,16 @@ timelog/
 ├── data/             原始数据：2026-11-25.a3f9c2.jsonl
 │   ├── 2026-11-25.a3f9c2.jsonl
 │   ├── collector.log
+│   ├── sync.log      每次同步的结果
 │   └── web.log       看板启动异常写这里
 ├── reports/          生成的报告
 │   ├── daily-2026-11-25.md
 │   └── weekly-48-2026.md
 └── tests/
     ├── selftest.py         单机自测
-    └── selftest_sync.py    多机合并 + 同步往返自测
+    ├── selftest_sync.py    多机合并 + 同步往返自测
+    ├── selftest_api.py     API 通道往返自测
+    └── selftest_join.py    新电脑接入端到端自测
 ```
 
 ---
