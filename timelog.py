@@ -240,7 +240,7 @@ def cmd_sync(args) -> int:
     quiet = bool(getattr(args, "quiet", False))
 
     if action == "setup":
-        ok, msg = sync.setup(args.url, args.path)
+        ok, msg = sync.setup(args.url, args.path, getattr(args, "transport", None))
         if not quiet:
             print(msg)
         return 0 if ok else 1
@@ -468,6 +468,7 @@ def main(argv=None) -> int:
     s.add_argument("--mode", choices=["install", "remove", "status"], default="install",
                    help="autostart 的动作：装/卸计划任务")
     s.add_argument("--minutes", type=int, default=30, help="自动同步间隔（分钟），默认 30")
+    s.add_argument("--transport", choices=["git", "api"], help="同步通道，默认 git（失败自动降级到 api）")
     s.set_defaults(func=cmd_sync)
 
     s = sub.add_parser("machine", help="查看 / 修改本机身份")

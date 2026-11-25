@@ -154,24 +154,36 @@ def merge_jsonl(local: Path, remote: Path) -> int:
 # ---------------------------------------------------------------- 主流程
 
 
-def setup(url: str | None = None, repo_path: str | None = None) -> tuple[bool, str]:
+def setup(url: str | None = None, repo_path: str | None = None, transport: str | None = None) -> tuple[bool, str]:
     cfg = load_sync_config()
     if url:
         cfg["repo"] = url.strip()
     if repo_path:
         cfg["path"] = str(Path(repo_path).expanduser().resolve())
-    repo = repo_dir()
-    cfg["path"] = str(repo)
+    cfg["transport"] = (transport or cfg.get("transport") or "git").lower()
     save_sync_config(cfg)
 
     if not cfg.get("repo"):
         return False, (
             "还没指定仓库地址。\n"
-            "  1) 在 GitHub 上新建一个 **Private** 仓库（不要勾 README/LICENSE），名字随便，比如 timelog-data\n"
+            "  1) 在 GitHub 上新建一个 **Private** 仓库（不要勾 README/LICENSE），名字比如 timelog-data\n"
             "  2) 把它的地址发我，或自己跑：\n"
             "     python timelog.py sync setup https://github.com/<你的用户名>/timelog-data.git"
         )
 
+    if cfg["transport"] != "git":
+        # API 通道：不需要本地 git 仓库，也不用先 clone
+        return True, (
+            f"数据仓库已配置（API 通道）：{cfg['repo']}\n\n"
+            "下一步：\n"
+            "  python timelog.py sync run\n\n"
+            "API 通道不需要本地 git 仓库，网络抽风时更耐打。\n"
+            "两台电脑都跑一次 sync setup + sync run，之后每天 sync run 一次即可。"
+        )
+
+    repo = repo_dir()
+    cfg["path"] = str(repo)
+    save_sync_config(cfg)
     repo.mkdir(parents=True, exist_ok=True)
     if not (repo / ".git").exists():
         code, out = git(repo, "init", "-b", "main")
@@ -233,11 +245,25 @@ def setup(url: str | None = None, repo_path: str | None = None) -> tuple[bool, s
 
 def run(store, dry_run: bool = False, quiet: bool = False) -> tuple[bool, str]:
     cfg = load_sync_config()
+    transport = (cfg.get("transport") or "git").lower()
+
+    if transport == "api":
+        import sync_api
+
+        ok, msg = sync_api.run(store, dry_run)
+        _log(store, msg, ok)
+        return ok, msg
+
     if not cfg.get("repo"):
         return False, "还没配置数据仓库。先跑：python timelog.py sync setup <仓库地址>"
     repo = repo_dir()
     if not (repo / ".git").exists():
-        return False, f"本地数据仓库不存在：{repo}\n先跑：python timelog.py sync setup <仓库地址>"
+        # 本地没有 git 仓库就直接走 API 通道，不用非得先 clone
+        import sync_api
+
+        ok, msg = sync_api.run(store, dry_run)
+        _log(store, msg, ok)
+        return ok, msg
 
     # 防止两次同步撞车（计划任务 + 手动同时跑）
     lock = store.data_dir / "sync.lock"
@@ -261,6 +287,16 @@ def run(store, dry_run: bool = False, quiet: bool = False) -> tuple[bool, str]:
                 lock.unlink()
             except OSError:
                 pass
+
+    # git 通道因网络失败 → 自动降级走 API（国内直连 github.com 的 git 端口不稳）
+    if not ok and not dry_run:
+        import sync_api
+
+        ok2, msg2 = sync_api.run(store, dry_run)
+        if ok2:
+            msg = msg + "\n\n—— git 通道没走通，已自动改用 API 通道完成同步 ——\n" + msg2
+            ok = True
+
     _log(store, msg, ok)
     if quiet:
         return ok, msg

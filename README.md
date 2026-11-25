@@ -134,6 +134,41 @@ sync.bat                    :: 等价于 python timelog.py sync run
 
 跑完看板上的「今日」就是两台电脑合起来的完整画面。
 
+### 自动同步（不用记得手动跑）
+
+```bat
+python timelog.py sync autostart --mode install --minutes 30
+```
+
+装两个触发器：
+
+| 触发器 | 实现方式 | 说明 |
+|---|---|---|
+| 每 30 分钟 | Windows 计划任务 `TimelogSync` | 静默跑，**不闪黑框**（用 pythonw） |
+| 每次登录 | 注册表 `HKCU\...\Run\TimelogSyncAtLogon` | 开机后先同步一次 |
+
+> 「登录时」用注册表而不是计划任务的 onlogon 触发器 —— 后者要管理员权限，普通用户会被
+> "Access is denied" 拒掉，而注册表 HKCU 不需要提权。
+
+看状态 / 卸载：
+
+```bat
+python timelog.py sync autostart --mode status
+python timelog.py sync autostart --mode remove
+```
+
+同步过程写日志到 `data/sync.log`，跑出问题先看它。
+
+### ⚠️ 关于网络
+
+国内访问 GitHub 时好时坏。工具已经做了三件事应对：
+
+- git 子进程**不继承 stdin**（否则会卡在等凭据提示上）、带 90 秒超时
+- 网络失败**自动重试 3 次**
+- 数据仓库配了 `http.lowSpeedLimit`，网速太慢就放弃等下一轮
+
+所以偶尔会在 `sync.log` 里看到「网络不稳，重试了 N 次」，是正常的。
+
 ### 合并规则（重要）
 
 - **数据文件按机器分开**：`2026-11-25.a3f9c2.jsonl`。两台电脑推同一个仓库**永远不会撞文件名**，git 不用处理任何冲突。
@@ -169,19 +204,24 @@ publish.bat
 ### 另一台电脑安装
 
 ```bat
-git clone https://github.com/你的用户名/timelog.git
+git clone https://github.com/anyizhe/timelog.git
 cd timelog
-python setup.py
+python join.py --name 公司笔记本
 ```
 
-`setup.py` 会依次：检查环境 → 给这台机器起名 → 建桌面快捷方式 → 问要不要开机自启 → 问要不要配数据同步。
+`join.py` 一次搞定：起名 → 建桌面快捷方式 → 接数据仓库 → **首次同步（把另一台的数据拉回来）**
+→ 装自动同步 → 装开机自启。
+
+首次推送需要登录 GitHub，浏览器会弹窗，登录一次就记住了。
+
+也可以用 `python setup.py` 走手动引导版（每步都问你）。
 
 ### 两个仓库，别搞混
 
 | 仓库 | 可见性 | 装什么 |
 |---|---|---|
-| `timelog`（代码） | **公开** | 工具本体、README |
-| `timelog-data`（数据） | **私有** | 每天的活动记录（**含窗口标题**） |
+| [`anyizhe/timelog`](https://github.com/anyizhe/timelog) | **公开** | 工具本体、README |
+| `anyizhe/timelog-data` | **私有** | 每天的活动记录（**含窗口标题**） |
 
 代码仓公开没关系，`.gitignore` 已经把 `data/`、`reports/`、`machine.json` 全排除了。
 **数据仓必须私有。**

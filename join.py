@@ -10,6 +10,7 @@
 from __future__ import annotations
 
 import argparse
+import os
 import subprocess
 import sys
 from pathlib import Path
@@ -52,6 +53,10 @@ def main() -> int:
         return 1
     print(f"· Python {sys.version.split()[0]}  OK")
 
+    # 沙箱模式（自测用）：设了机器身份文件就说明不是正式安装，
+    # 这时候绝不碰桌面快捷方式和系统计划任务
+    sandbox = bool(os.environ.get("TIMELOG_MACHINE_FILE"))
+
     code, out = sh("git", "--version")
     if code != 0:
         print("没找到 git。装 Git for Windows：https://git-scm.com/download/win")
@@ -70,8 +75,11 @@ def main() -> int:
     # ---- 2. 桌面快捷方式 ----
     from shortcut import create_desktop_shortcut
 
-    ok, msg = create_desktop_shortcut()
-    print(f"· 桌面快捷方式：{'已建 ' + msg if ok else '没建成（' + msg + '）'}")
+    if sandbox:
+        print("· 桌面快捷方式：沙箱模式，跳过")
+    else:
+        ok, msg = create_desktop_shortcut()
+        print(f"· 桌面快捷方式：{'已建 ' + msg if ok else '没建成（' + msg + '）'}")
 
     # ---- 3. 接数据仓库 ----
     import sync
@@ -92,15 +100,20 @@ def main() -> int:
         print("   " + msg.replace("\n", "\n   "))
 
     # ---- 4. 自动同步 ----
-    if not args.no_autostart:
+    if sandbox:
+        print("· 自动同步：沙箱模式，跳过")
+    elif not args.no_autostart:
         ok, msg = sync.install_task(minutes=args.minutes)
         print("· 自动同步：" + ("已装" if ok else "没装上"))
         if not ok:
             print(msg)
 
     # ---- 5. 采集器自启 ----
-    code, out = sh(sys.executable, str(BASE_DIR / "timelog.py"), "autostart", "install")
-    print("· 开机自动记录：" + ("已装" if code == 0 else "没装上，可手动跑 start.bat"))
+    if sandbox:
+        print("· 开机自动记录：沙箱模式，跳过")
+    else:
+        code, out = sh(sys.executable, str(BASE_DIR / "timelog.py"), "autostart", "install")
+        print("· 开机自动记录：" + ("已装" if code == 0 else "没装上，可手动跑 start.bat"))
 
     print()
     print("=" * 58)
