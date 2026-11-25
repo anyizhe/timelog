@@ -1,0 +1,36 @@
+{
+  "poll_seconds": 2,
+  "heartbeat_seconds": 120,
+  "idle_seconds": 600,
+  "hide_title_keywords": [
+    "password",
+    "passwd",
+    "pwd",
+    "secret",
+    "token",
+    "cookie",
+    "密码",
+    "验证码",
+    "身份证",
+    "银行卡",
+    "私钥"
+  ],
+  "ignore_apps": [],
+  "hide_apps": [],
+  "skip_window_classes": [
+    "progman",
+    "shelldlldefview",
+    "shelltraywnd",
+    "workerw",
+    "windows.ui.core.corewindow",
+    "windows.ui.composition.desktopwindowcontentbridge",
+    "default ime",
+    "msctfime ui",
+    "ime",
+    "notifyiconoverflowwindow",
+    "tasklistthumbnail",
+    "multitaskingviewframe"
+  ],
+  "report_on_stop": true,
+  "auto_report": true
+}

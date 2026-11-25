@@ -1,0 +1,608 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>时间记录 · 看板</title>
+<style>
+:root{
+  --bg:#0d1017; --panel:#161b25; --panel2:#1c2230; --line:#252d3d;
+  --fg:#e6eaf2; --dim:#8b96ab; --dim2:#5d6880;
+  --accent:#5b9cff; --accent2:#7ee3c0; --warn:#ffb454; --danger:#ff6b6b;
+  --radius:12px;
+}
+*{box-sizing:border-box}
+html,body{margin:0;padding:0}
+body{
+  background:var(--bg); color:var(--fg);
+  font:14px/1.6 -apple-system,BlinkMacSystemFont,"Segoe UI","Microsoft YaHei","PingFang SC",sans-serif;
+  -webkit-font-smoothing:antialiased;
+}
+a{color:var(--accent)}
+.wrap{max-width:1180px;margin:0 auto;padding:0 20px 64px}
+
+/* 顶栏 */
+header{
+  position:sticky; top:0; z-index:20;
+  background:rgba(13,16,23,.88); backdrop-filter:blur(12px);
+  border-bottom:1px solid var(--line);
+}
+.hbar{max-width:1180px;margin:0 auto;padding:14px 20px;display:flex;align-items:center;gap:14px}
+.logo{font-size:16px;font-weight:650;letter-spacing:.3px;white-space:nowrap}
+.logo span{color:var(--accent)}
+.spacer{flex:1}
+.pill{
+  display:inline-flex;align-items:center;gap:7px;padding:4px 11px;border-radius:999px;
+  background:var(--panel2);border:1px solid var(--line);font-size:12.5px;color:var(--dim);
+  white-space:nowrap;
+}
+.dot{width:7px;height:7px;border-radius:50%;background:var(--dim2)}
+.dot.on{background:var(--accent2);box-shadow:0 0 0 3px rgba(126,227,192,.15)}
+.dot.off{background:var(--danger)}
+button{
+  font:inherit;color:var(--fg);background:var(--panel2);border:1px solid var(--line);
+  padding:6px 13px;border-radius:8px;cursor:pointer;transition:.15s;
+}
+button:hover{border-color:var(--accent);color:#fff;background:#232b3b}
+button.primary{background:var(--accent);border-color:var(--accent);color:#07101f;font-weight:600}
+button.primary:hover{filter:brightness(1.1)}
+button.sm{padding:3px 10px;font-size:12.5px}
+button:disabled{opacity:.45;cursor:not-allowed}
+
+/* 标签页 */
+nav{display:flex;gap:4px;margin:22px 0 18px;border-bottom:1px solid var(--line);flex-wrap:wrap}
+nav button{
+  background:none;border:none;border-bottom:2px solid transparent;border-radius:0;
+  padding:9px 15px;color:var(--dim);font-size:14px;
+}
+nav button:hover{color:var(--fg);background:none}
+nav button.on{color:var(--fg);border-bottom-color:var(--accent);font-weight:600}
+
+/* 卡片 */
+.card{background:var(--panel);border:1px solid var(--line);border-radius:var(--radius);padding:16px 18px;margin-bottom:16px}
+.card h3{margin:0 0 13px;font-size:13px;font-weight:650;color:var(--dim);letter-spacing:.6px;text-transform:uppercase}
+.grid{display:grid;gap:16px}
+.g2{grid-template-columns:1fr 1fr}
+.g3{grid-template-columns:repeat(3,1fr)}
+@media(max-width:900px){.g2,.g3{grid-template-columns:1fr}}
+
+/* 数据格 */
+.tiles{display:grid;grid-template-columns:repeat(auto-fit,minmax(140px,1fr));gap:12px;margin-bottom:16px}
+.tile{background:var(--panel);border:1px solid var(--line);border-radius:var(--radius);padding:13px 15px}
+.tile .k{font-size:12px;color:var(--dim);margin-bottom:5px}
+.tile .v{font-size:23px;font-weight:640;letter-spacing:-.4px}
+.tile .v small{font-size:12px;font-weight:400;color:var(--dim);margin-left:3px}
+
+/* 条形图 */
+.barrow{display:flex;align-items:center;gap:11px;margin-bottom:9px}
+.barrow .nm{width:150px;flex:none;font-size:13px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.barrow .tr{flex:1;height:9px;background:#0a0d13;border-radius:5px;overflow:hidden}
+.barrow .fl{height:100%;border-radius:5px;background:var(--accent);transition:width .3s}
+.barrow .vl{width:74px;flex:none;text-align:right;font-size:12.5px;color:var(--dim);font-variant-numeric:tabular-nums}
+
+/* 表格 */
+table{width:100%;border-collapse:collapse;font-size:13px}
+th{text-align:left;color:var(--dim);font-weight:600;font-size:12px;padding:7px 10px;border-bottom:1px solid var(--line);white-space:nowrap}
+td{padding:7px 10px;border-bottom:1px solid rgba(37,45,61,.55);vertical-align:top}
+tr:last-child td{border-bottom:none}
+td.num{text-align:right;font-variant-numeric:tabular-nums;white-space:nowrap}
+.titlecell{max-width:460px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.tag{display:inline-block;padding:1px 8px;border-radius:5px;font-size:11.5px;background:var(--panel2);border:1px solid var(--line);color:var(--dim);white-space:nowrap}
+
+/* 时间线 */
+.tl{list-style:none;margin:0;padding:0}
+.tl li{display:flex;gap:12px;align-items:baseline;padding:6px 0 6px 11px;border-left:2px solid var(--line)}
+.tl li:hover{background:rgba(91,156,255,.05)}
+.tl .tm{color:var(--dim2);font-size:12px;font-variant-numeric:tabular-nums;white-space:nowrap;flex:none}
+.tl .ap{font-size:12.5px;flex:none;max-width:170px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.tl .ti{flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:#c3cbdb}
+.tl .du{flex:none;color:var(--dim);font-size:12px;font-variant-numeric:tabular-nums}
+
+/* 观察 */
+ul.notes{margin:0;padding-left:18px;color:#c3cbdb}
+ul.notes li{margin-bottom:6px}
+
+/* 表单 */
+.form{display:flex;gap:9px;flex-wrap:wrap;align-items:center}
+input,textarea,select{
+  font:inherit;color:var(--fg);background:#0b0e14;border:1px solid var(--line);
+  padding:7px 11px;border-radius:8px;outline:none;
+}
+input:focus,textarea:focus{border-color:var(--accent)}
+input.grow{flex:1;min-width:220px}
+textarea{width:100%;min-height:260px;font-family:"Cascadia Code",Consolas,monospace;font-size:12.5px;line-height:1.55;resize:vertical}
+label.fl{font-size:12.5px;color:var(--dim);display:flex;align-items:center;gap:6px}
+.hint{font-size:12px;color:var(--dim2);margin-top:9px}
+.mono{font-family:"Cascadia Code",Consolas,monospace;font-size:12px;color:var(--dim);word-break:break-all}
+
+/* 提示 */
+#toast{
+  position:fixed;left:50%;bottom:28px;transform:translateX(-50%) translateY(20px);
+  background:var(--panel2);border:1px solid var(--line);padding:10px 18px;border-radius:10px;
+  opacity:0;pointer-events:none;transition:.22s;z-index:99;box-shadow:0 8px 28px rgba(0,0,0,.45);
+}
+#toast.on{opacity:1;transform:translateX(-50%) translateY(0)}
+#toast.err{border-color:var(--danger)}
+
+/* markdown 预览 */
+.md{font-size:13.5px;line-height:1.75}
+.md h1{font-size:20px;margin:0 0 14px;padding-bottom:9px;border-bottom:1px solid var(--line)}
+.md h2{font-size:16px;margin:26px 0 11px}
+.md h3{font-size:14px;margin:20px 0 9px;color:var(--dim)}
+.md table{margin:10px 0 16px;font-size:12.5px}
+.md th,.md td{border:1px solid var(--line);padding:5px 10px}
+.md code{background:#0b0e14;padding:1px 6px;border-radius:4px;font-size:12px;font-family:Consolas,monospace}
+.md pre{background:#0b0e14;padding:13px;border-radius:9px;overflow-x:auto;border:1px solid var(--line)}
+.md pre code{background:none;padding:0}
+.md blockquote{margin:9px 0;padding:7px 13px;border-left:3px solid var(--accent);background:rgba(91,156,255,.06);color:var(--dim);border-radius:0 7px 7px 0}
+.md ul,.md ol{padding-left:22px}
+.md hr{border:none;border-top:1px solid var(--line);margin:18px 0}
+.md strong{color:#fff}
+.hidden{display:none!important}
+.empty{color:var(--dim2);padding:14px 0;text-align:center;font-size:13px}
+</style>
+</head>
+<body>
+
+<header>
+  <div class="hbar">
+    <div class="logo">⏱ <span>时间记录</span> 看板</div>
+    <div class="pill" id="statusPill"><span class="dot" id="statusDot"></span><span id="statusText">连接中…</span></div>
+    <div class="pill" id="machinePill" title="本机身份">💻 <span id="machineText">…</span></div>
+    <div class="spacer"></div>
+    <button id="btnStart" class="sm">开始记录</button>
+    <button id="btnStop" class="sm">停止</button>
+    <button id="btnRefresh" class="sm">刷新</button>
+  </div>
+</header>
+
+<div class="wrap">
+
+  <nav>
+    <button data-tab="today" class="on">今日</button>
+    <button data-tab="week">本周</button>
+    <button data-tab="report">报告</button>
+    <button data-tab="settings">设置</button>
+  </nav>
+
+  <!-- ============ 今日 ============ -->
+  <section id="tab-today">
+    <div class="card">
+      <h3>手动补一条</h3>
+      <div class="form">
+        <input id="noteText" class="grow" placeholder="刚才在做什么？比如：开需求评审会">
+        <label class="fl">时长 <input id="noteDur" style="width:88px" placeholder="45m"></label>
+        <label class="fl">时间 <input id="noteAt" style="width:118px" placeholder="21:30"></label>
+        <button class="primary" id="btnAdd">记下</button>
+      </div>
+      <div class="hint">时长可写 30m / 1h / 1h30m，留空表示一个时间点；时间留空表示现在。</div>
+    </div>
+
+    <div class="tiles" id="todayTiles"></div>
+
+    <div class="grid g2">
+      <div class="card">
+        <h3>应用使用排行</h3>
+        <div id="todayApps"></div>
+      </div>
+      <div class="card">
+        <h3>观察</h3>
+        <ul class="notes" id="todayInsights"></ul>
+      </div>
+    </div>
+
+    <div class="card">
+      <h3>今天碰到的东西</h3>
+      <div id="todayTitles"></div>
+    </div>
+
+    <div class="card">
+      <h3>时间线</h3>
+      <div id="todayTimeline"></div>
+    </div>
+
+    <div class="card">
+      <h3>手动记录</h3>
+      <div id="todayManual"></div>
+    </div>
+  </section>
+
+  <!-- ============ 本周 ============ -->
+  <section id="tab-week" class="hidden">
+    <div class="card" style="display:flex;align-items:center;gap:12px">
+      <h3 style="margin:0">周视图</h3>
+      <div class="spacer"></div>
+      <button class="sm" id="weekPrev">‹ 上一周</button>
+      <span id="weekLabel" style="min-width:170px;text-align:center;color:var(--dim)"></span>
+      <button class="sm" id="weekNext">下一周 ›</button>
+    </div>
+
+    <div class="tiles" id="weekTiles"></div>
+
+    <div class="card">
+      <h3>每日分布</h3>
+      <div id="weekDays"></div>
+    </div>
+
+    <div class="grid g2">
+      <div class="card">
+        <h3>本周应用排行</h3>
+        <div id="weekApps"></div>
+      </div>
+      <div class="card">
+        <h3>观察</h3>
+        <ul class="notes" id="weekInsights"></ul>
+      </div>
+    </div>
+
+    <div class="card">
+      <h3>时段活跃度（0–23 时）</h3>
+      <div id="weekHours"></div>
+    </div>
+
+    <div class="card">
+      <h3>本周碰到的东西</h3>
+      <div id="weekTitles"></div>
+    </div>
+  </section>
+
+  <!-- ============ 报告 ============ -->
+  <section id="tab-report" class="hidden">
+    <div class="card" style="display:flex;align-items:center;gap:10px;flex-wrap:wrap">
+      <h3 style="margin:0">Markdown 报告</h3>
+      <div class="spacer"></div>
+      <select id="reportKind">
+        <option value="daily">日报</option>
+        <option value="weekly">周报</option>
+      </select>
+      <input id="reportDate" type="date" style="width:150px">
+      <button class="primary" id="btnGenReport">生成并查看</button>
+      <button class="sm" id="btnCopyReport">复制原文</button>
+    </div>
+    <div class="card">
+      <div class="md" id="reportBody"><div class="empty">点「生成并查看」</div></div>
+    </div>
+  </section>
+
+  <!-- ============ 设置 ============ -->
+  <section id="tab-settings" class="hidden">
+    <div class="card">
+      <h3>采集器</h3>
+      <div class="form">
+        <button id="btnStart2" class="primary">开始记录</button>
+        <button id="btnStop2">停止记录</button>
+        <span class="mono" id="paths"></span>
+      </div>
+      <div class="hint">停止采集器不会影响看板；看板本身只是个本地网页服务，关掉浏览器不会停采集。</div>
+    </div>
+
+    <div class="card">
+      <h3>配置 config.json</h3>
+      <textarea id="cfgBox" spellcheck="false"></textarea>
+      <div class="form" style="margin-top:12px">
+        <button class="primary" id="btnSaveCfg">保存配置</button>
+        <button class="sm" id="btnReloadCfg">重新载入</button>
+        <span class="hint" style="margin:0">hide_title_keywords：标题命中就整条隐藏；ignore_apps：这些进程完全不记录。</span>
+      </div>
+    </div>
+  </section>
+
+</div>
+
+<div id="toast"></div>
+
+<script>
+const $ = s => document.querySelector(s);
+const $$ = s => Array.from(document.querySelectorAll(s));
+const esc = s => String(s==null?'':s).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+
+function dur(sec){
+  sec = Math.round(sec||0);
+  if(sec<60) return sec+' 秒';
+  const m = Math.floor(sec/60), s = sec%60;
+  if(m<60) return m+' 分'+(s?(' '+s+' 秒'):'');
+  const h = Math.floor(m/60), mm = m%60;
+  return h+' 小时'+(mm?(' '+mm+' 分'):'');
+}
+function durShort(sec){
+  sec = Math.round(sec||0);
+  if(sec<60) return sec+'s';
+  const m = Math.floor(sec/60);
+  if(m<60) return m+'m';
+  const h = Math.floor(m/60);
+  return h+'h'+(m%60?String(m%60).padStart(2,'0')+'m':'');
+}
+function hm(ts){ const d=new Date(ts*1000); return String(d.getHours()).padStart(2,'0')+':'+String(d.getMinutes()).padStart(2,'0'); }
+function md(ts){ const d=new Date(ts*1000); return (d.getMonth()+1)+'/'+d.getDate(); }
+function wd(ts){ return '日一二三四五六'[new Date(ts*1000).getDay()]; }
+
+const PALETTE=['#5b9cff','#7ee3c0','#ffb454','#ff8fa3','#b28dff','#4dd0e1','#f4a261','#90d743','#e879f9','#67b7ff'];
+function appColor(name){
+  let h=0; for(const ch of String(name||'')) h=(h*31+ch.charCodeAt(0))>>>0;
+  return PALETTE[h%PALETTE.length];
+}
+
+function toast(msg, isErr){
+  const t=$('#toast'); t.textContent=msg; t.className='on'+(isErr?' err':'');
+  clearTimeout(t._h); t._h=setTimeout(()=>{t.className='';},2600);
+}
+async function api(path, opts){
+  const r = await fetch(path, Object.assign({headers:{'Content-Type':'application/json'}}, opts||{}));
+  let j;
+  try{ j = await r.json(); }catch(e){ throw new Error('服务器没返回 JSON（'+r.status+'）'); }
+  if(!r.ok || (j && j.error)) throw new Error((j&&j.error)||('HTTP '+r.status));
+  return j;
+}
+
+/* ---------- 状态 ---------- */
+let collectorRunning = false;
+async function loadStatus(){
+  try{
+    const s = await api('/api/status');
+    collectorRunning = !!s.running;
+    $('#statusDot').className = 'dot ' + (s.running?'on':'off');
+    $('#statusText').textContent = s.running ? ('记录中 · PID '+s.pid) : '未在记录';
+    if(s.machine) $('#machineText').textContent = s.machine.name;
+    $('#btnStart').disabled = s.running;
+    $('#btnStop').disabled = !s.running;
+    $('#paths').textContent = '数据：'+s.data_dir+'　报告：'+s.report_dir;
+  }catch(e){
+    $('#statusDot').className='dot off';
+    $('#statusText').textContent='看板连不上';
+  }
+}
+async function toggleCollector(action){
+  try{
+    const r = await api('/api/collector/'+action, {method:'POST', body:'{}'});
+    toast(r.message||'ok');
+    await loadStatus();
+    if(current==='today') loadDay();
+  }catch(e){ toast(e.message,true); }
+}
+
+/* ---------- 今日 ---------- */
+let todayDate = new Date();
+async function loadDay(){
+  const ds = todayDate.toISOString().slice(0,10);
+  let d;
+  try{ d = await api('/api/day?date='+ds); }catch(e){ toast(e.message,true); return; }
+
+  const machCount = Object.keys(d.machines||{}).length;
+  $('#todayTiles').innerHTML = [
+    ['屏幕活跃', dur(d.window), '不含空闲'],
+    ['空闲', dur(d.idle), '没动键鼠'],
+    ['手动记录', d.manual.length+' 条', dur(d.manual_seconds)],
+    ['应用数', d.app_count+' 个', ''],
+    ['切换次数', d.switches+' 次', '']
+  ].concat(machCount>1 ? [['设备', machCount+' 台', Object.keys(d.machines).join('、')]] : [])
+  .map(t=>'<div class="tile"><div class="k">'+t[0]+'</div><div class="v">'+t[1]+(t[2]?'<small>'+esc(t[2])+'</small>':'')+'</div></div>').join('');
+
+  const apps = $('#todayApps');
+  if(!d.apps.length){ apps.innerHTML='<div class="empty">还没有采集到活动</div>'; }
+  else{
+    const max = Math.max(...d.apps.map(a=>a.seconds));
+    apps.innerHTML = d.apps.map(a=>{
+      const dev = (a.machines&&a.machines.length>1) ? a.machines.map(m=>m.name+' '+durShort(m.seconds)).join(' · ') : '';
+      return '<div class="barrow"><div class="nm" title="'+esc(a.app)+'">'+esc(a.app)+
+        (dev?'<div style="font-size:11px;color:var(--dim2)">'+esc(dev)+'</div>':'')+'</div>'+
+      '<div class="tr"><div class="fl" style="width:'+(a.seconds/max*100).toFixed(1)+'%;background:'+appColor(a.app)+'"></div></div>'+
+      '<div class="vl">'+dur(a.seconds)+'</div></div>';
+    }).join('');
+  }
+
+  $('#todayInsights').innerHTML = d.insights.length
+    ? d.insights.map(i=>'<li>'+esc(i)+'</li>').join('')
+    : '<li style="color:var(--dim2)">数据还太少，看不出什么</li>';
+
+  const tt = $('#todayTitles');
+  if(!d.titles.length){ tt.innerHTML='<div class="empty">还没有采集到窗口标题</div>'; }
+  else{
+    tt.innerHTML='<table><thead><tr><th>窗口标题</th><th>应用</th><th style="text-align:right">时长</th></tr></thead><tbody>'+
+      d.titles.slice(0,30).map(t=>'<tr><td class="titlecell" title="'+esc(t.title)+'">'+esc(t.title)+'</td>'+
+      '<td><span class="tag">'+esc(t.app)+'</span></td><td class="num">'+dur(t.seconds)+'</td></tr>').join('')+
+      '</tbody></table>';
+  }
+
+  const tl = $('#todayTimeline');
+  if(!d.segments.length){ tl.innerHTML='<div class="empty">还没有时间线数据</div>'; }
+  else{
+    const multi = machCount>1;
+    tl.innerHTML='<ul class="tl">'+d.segments.map(s=>
+      '<li style="border-left-color:'+(s.kind==='idle'?'#3a4356':appColor(s.app))+'">'+
+      '<span class="tm">'+hm(s.start)+'–'+hm(s.end)+'</span>'+
+      (multi?'<span class="tag">'+esc(s.mname||'未标记')+'</span>':'')+
+      '<span class="ap" style="color:'+(s.kind==='idle'?'var(--dim2)':appColor(s.app))+'">'+esc(s.kind==='idle'?'（空闲）':s.app)+'</span>'+
+      '<span class="ti">'+esc(s.title||'—')+'</span>'+
+      '<span class="du">'+durShort(s.seconds)+'</span></li>').join('')+'</ul>';
+  }
+
+  const mn = $('#todayManual');
+  if(!d.manual.length){ mn.innerHTML='<div class="empty">今天还没有手动记录</div>'; }
+  else{
+    mn.innerHTML='<table><thead><tr><th>时间</th><th>内容</th><th style="text-align:right">时长</th></tr></thead><tbody>'+
+      d.manual.map(m=>{
+        const span = m.dur ? (hm(m.t)+'–'+hm(m.t+m.dur)) : hm(m.t);
+        return '<tr><td class="num" style="text-align:left">'+span+'</td><td>'+esc(m.note)+'</td>'+
+               '<td class="num">'+(m.dur?dur(m.dur):'—')+'</td></tr>';
+      }).join('')+'</tbody></table>';
+  }
+}
+
+/* ---------- 本周 ---------- */
+let weekOffset = 0;
+async function loadWeek(){
+  const iso = new Date(); iso.setDate(iso.getDate() + weekOffset*7);
+  const mon = new Date(iso); const dow = (mon.getDay()+6)%7; mon.setDate(mon.getDate()-dow);
+  const target = mon.toISOString().slice(0,10);
+  let d;
+  try{ d = await api('/api/week?week='+weekOf(mon)); }catch(e){ toast(e.message,true); return; }
+
+  $('#weekLabel').textContent = d.start+' ~ '+d.end+'（第 '+d.iso_week+' 周）';
+  const wm = Object.keys(d.machines||{});
+  $('#weekTiles').innerHTML = [
+    ['本周活跃', dur(d.window), ''],
+    ['日均活跃', dur(d.window/Math.max(1,d.days.filter(x=>x.window>60).length||1)), '按有记录的天算'],
+    ['空闲', dur(d.idle), ''],
+    ['应用数', d.app_count+' 个', ''],
+    ['手动记录', d.manual.length+' 条', dur(d.manual_seconds)]
+  ].concat(wm.length>1 ? [['设备', wm.length+' 台', wm.join('、')]] : [])
+  .map(t=>'<div class="tile"><div class="k">'+t[0]+'</div><div class="v">'+t[1]+(t[2]?'<small>'+esc(t[2])+'</small>':'')+'</div></div>').join('');
+
+  const max = Math.max(...d.days.map(x=>x.window), 1);
+  $('#weekDays').innerHTML = d.days.map(x=>
+    '<div class="barrow"><div class="nm">'+md(Date.parse(x.date+'T00:00:00')/1000)+' 周'+wd(Date.parse(x.date+'T00:00:00')/1000)+
+    (x.is_today?' ·今天':'')+(x.is_future?' ·未到':'')+
+    (x.machines&&Object.keys(x.machines).length>1?'<div style="font-size:11px;color:var(--dim2)">'+esc(Object.keys(x.machines).join('、'))+'</div>':'')+
+    '</div>'+
+    '<div class="tr"><div class="fl" style="width:'+(x.window/max*100).toFixed(1)+'%;background:'+(x.is_today?'#7ee3c0':'#5b9cff')+'"></div></div>'+
+    '<div class="vl">'+durShort(x.window)+'</div></div>').join('');
+
+  const wa = $('#weekApps');
+  if(!d.apps.length) wa.innerHTML='<div class="empty">本周还没有采集到活动</div>';
+  else{
+    const mx = Math.max(...d.apps.map(a=>a.seconds));
+    wa.innerHTML = d.apps.map(a=>'<div class="barrow"><div class="nm" title="'+esc(a.app)+'">'+esc(a.app)+'</div>'+
+      '<div class="tr"><div class="fl" style="width:'+(a.seconds/mx*100).toFixed(1)+'%;background:'+appColor(a.app)+'"></div></div>'+
+      '<div class="vl">'+dur(a.seconds)+'</div></div>').join('');
+  }
+
+  $('#weekInsights').innerHTML = d.insights.length
+    ? d.insights.map(i=>'<li>'+esc(i)+'</li>').join('')
+    : '<li style="color:var(--dim2)">数据还太少</li>';
+
+  const hm2 = Math.max(...d.hours, 1);
+  $('#weekHours').innerHTML = d.hours.map((v,i)=>
+    '<div class="barrow"><div class="nm">'+String(i).padStart(2,'0')+':00</div>'+
+    '<div class="tr" style="height:7px"><div class="fl" style="width:'+(v/hm2*100).toFixed(1)+'%;background:#b28dff"></div></div>'+
+    '<div class="vl">'+durShort(v)+'</div></div>').join('');
+
+  const wt = $('#weekTitles');
+  if(!d.titles.length) wt.innerHTML='<div class="empty">本周还没有采集到窗口标题</div>';
+  else wt.innerHTML='<table><thead><tr><th>窗口标题</th><th>应用</th><th style="text-align:right">时长</th></tr></thead><tbody>'+
+    d.titles.slice(0,30).map(t=>'<tr><td class="titlecell" title="'+esc(t.title)+'">'+esc(t.title)+'</td>'+
+    '<td><span class="tag">'+esc(t.app)+'</span></td><td class="num">'+dur(t.seconds)+'</td></tr>').join('')+'</tbody></table>';
+}
+function weekOf(d){
+  const t=new Date(Date.UTC(d.getFullYear(),d.getMonth(),d.getDate()));
+  const dn=(t.getUTCDay()+6)%7; t.setUTCDate(t.getUTCDate()-dn+3);
+  const y=t.getUTCFullYear(); const jan4=new Date(Date.UTC(y,0,4));
+  return 1+Math.round(((t-jan4)/86400000-3+((jan4.getUTCDay()+6)%7))/7);
+}
+
+/* ---------- markdown → html ---------- */
+function md2html(src){
+  const lines = String(src||'').split('\n');
+  let out=[], i=0, inCode=false, buf=[];
+  const inline = t => esc(t)
+    .replace(/`([^`]+)`/g,'<code>$1</code>')
+    .replace(/\*\*([^*]+)\*\*/g,'<strong>$1</strong>');
+  while(i<lines.length){
+    const l = lines[i];
+    if(l.trim().startsWith('```')){
+      if(inCode){ out.push('<pre><code>'+esc(buf.join('\n'))+'</code></pre>'); buf=[]; inCode=false; }
+      else inCode=true;
+      i++; continue;
+    }
+    if(inCode){ buf.push(l); i++; continue; }
+    if(/^\s*\|.*\|\s*$/.test(l) && i+1<lines.length && /^\s*\|[\s:\-|]+\|\s*$/.test(lines[i+1])){
+      const cells = r => r.trim().replace(/^\||\|$/g,'').split('|').map(c=>c.trim());
+      const head = cells(l); i+=2; const rows=[];
+      while(i<lines.length && /^\s*\|.*\|\s*$/.test(lines[i])){ rows.push(cells(lines[i])); i++; }
+      out.push('<table><thead><tr>'+head.map(h=>'<th>'+inline(h)+'</th>').join('')+'</tr></thead><tbody>'+
+        rows.map(r=>'<tr>'+r.map(c=>'<td>'+inline(c)+'</td>').join('')+'</tr>').join('')+'</tbody></table>');
+      continue;
+    }
+    const h = l.match(/^(#{1,6})\s+(.*)$/);
+    if(h){ out.push('<h'+h[1].length+'>'+inline(h[2])+'</h'+h[1].length+'>'); i++; continue; }
+    if(/^\s*>\s?/.test(l)){ out.push('<blockquote>'+inline(l.replace(/^\s*>\s?/,''))+'</blockquote>'); i++; continue; }
+    if(/^\s*(-{3,}|\*{3,})\s*$/.test(l)){ out.push('<hr>'); i++; continue; }
+    if(/^\s*[-*]\s+/.test(l)){
+      const items=[];
+      while(i<lines.length && /^\s*[-*]\s+/.test(lines[i])){ items.push(lines[i].replace(/^\s*[-*]\s+/,'')); i++; }
+      out.push('<ul>'+items.map(x=>'<li>'+inline(x)+'</li>').join('')+'</ul>');
+      continue;
+    }
+    if(l.trim()===''){ i++; continue; }
+    const para=[];
+    while(i<lines.length && lines[i].trim()!=='' && !/^(#{1,6}\s|\s*\||```)/.test(lines[i])){ para.push(lines[i]); i++; }
+    if(para.length) out.push('<p>'+inline(para.join(' '))+'</p>');
+  }
+  return out.join('\n');
+}
+
+/* ---------- 报告 ---------- */
+async function genReport(){
+  const kind = $('#reportKind').value;
+  const q = kind==='daily' ? ('?kind=daily&date='+$('#reportDate').value) : '?kind=weekly';
+  try{
+    const r = await api('/api/report'+q);
+    $('#reportBody').innerHTML = md2html(r.markdown);
+    $('#reportBody')._md = r.markdown;
+    toast('报告已生成：'+r.path);
+  }catch(e){ toast(e.message,true); }
+}
+
+/* ---------- 配置 ---------- */
+async function loadConfig(){
+  try{
+    const r = await api('/api/config');
+    $('#cfgBox').value = JSON.stringify(r.config, null, 2);
+  }catch(e){ toast(e.message,true); }
+}
+async function saveConfig(){
+  try{
+    const cfg = JSON.parse($('#cfgBox').value);
+    await api('/api/config', {method:'POST', body: JSON.stringify({config:cfg})});
+    toast('配置已保存');
+  }catch(e){ toast('配置有问题：'+e.message,true); }
+}
+
+/* ---------- 标签页 ---------- */
+let current='today';
+function switchTab(t){
+  current=t;
+  $$('nav button').forEach(b=>b.classList.toggle('on', b.dataset.tab===t));
+  ['today','week','report','settings'].forEach(x=>$('#tab-'+x).classList.toggle('hidden', x!==t));
+  if(t==='today') loadDay();
+  if(t==='week') loadWeek();
+  if(t==='settings') loadConfig();
+}
+
+/* ---------- 事件 ---------- */
+$$('nav button').forEach(b=>b.addEventListener('click',()=>switchTab(b.dataset.tab)));
+$('#btnStart').onclick = ()=>toggleCollector('start');
+$('#btnStop').onclick = ()=>toggleCollector('stop');
+$('#btnStart2').onclick = ()=>toggleCollector('start');
+$('#btnStop2').onclick = ()=>toggleCollector('stop');
+$('#btnRefresh').onclick = ()=>{ loadStatus(); if(current==='today')loadDay(); if(current==='week')loadWeek(); };
+$('#btnAdd').onclick = async ()=>{
+  const note=$('#noteText').value.trim();
+  if(!note){ toast('先写点内容',true); return; }
+  try{
+    await api('/api/add',{method:'POST',body:JSON.stringify({note,dur:$('#noteDur').value.trim(),at:$('#noteAt').value.trim()})});
+    $('#noteText').value=''; $('#noteDur').value=''; $('#noteAt').value='';
+    toast('记下了');
+    loadDay();
+  }catch(e){ toast(e.message,true); }
+};
+$('#noteText').addEventListener('keydown',e=>{ if(e.key==='Enter') $('#btnAdd').click(); });
+$('#weekPrev').onclick = ()=>{ weekOffset--; loadWeek(); };
+$('#weekNext').onclick = ()=>{ weekOffset++; loadWeek(); };
+$('#btnGenReport').onclick = genReport;
+$('#btnCopyReport').onclick = async ()=>{
+  const md = $('#reportBody')._md || '';
+  if(!md){ toast('先生成报告',true); return; }
+  try{ await navigator.clipboard.writeText(md); toast('已复制到剪贴板'); }
+  catch(e){ toast('复制失败：'+e.message,true); }
+};
+$('#btnSaveCfg').onclick = saveConfig;
+$('#btnReloadCfg').onclick = loadConfig;
+
+/* ---------- 启动 ---------- */
+$('#reportDate').value = new Date().toISOString().slice(0,10);
+loadStatus();
+loadDay();
+setInterval(()=>{ loadStatus(); if(current==='today') loadDay(); }, 15000);
+</script>
+</body>
+</html>

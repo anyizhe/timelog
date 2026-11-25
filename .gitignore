@@ -1,0 +1,22 @@
+# ---- 本地数据，绝不能提交（尤其是公开仓库） ----
+data/
+reports/
+
+# ---- 每台机器各自不同的本地文件 ----
+machine.json
+sync.json
+
+# ---- 运行时产物 ----
+__pycache__/
+*.pyc
+*.pyo
+*.log
+*.pid
+stop.flag
+.venv/
+venv/
+
+# ---- 编辑器 ----
+.vscode/
+.idea/
+*.swp
