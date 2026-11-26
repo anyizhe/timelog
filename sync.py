@@ -73,7 +73,14 @@ def git(repo: Path, *args: str, check: bool = False, timeout: int = 90) -> tuple
 
     stdin 一定要接 DEVNULL —— 否则 git 遇到需要输入的提示（要用户名/密码）会
     一直等终端输入，表现为整个同步卡死。认证交给 Git Credential Manager 自己处理。
+
+    还要加 CREATE_NO_WINDOW —— git.exe 本身是个控制台程序，从无控制台的进程里
+    调起来会自己分配一个新控制台窗口，**弹窗抢焦点**。每 30 分钟同步一次就抢一次，
+    用户屏幕上会莫名其妙闪窗，而且被抢走的那几秒会污染前台窗口记录（这个坑踩过）。
     """
+    flags = 0x08000000  # CREATE_NO_WINDOW
+    if os.name == "nt":
+        flags |= 0x10000000  # CREATE_NEW_PROCESS_GROUP
     try:
         r = subprocess.run(
             ["git", "-C", str(repo), *args],
@@ -83,6 +90,7 @@ def git(repo: Path, *args: str, check: bool = False, timeout: int = 90) -> tuple
             errors="replace",
             stdin=subprocess.DEVNULL,
             timeout=timeout,
+            creationflags=flags,
         )
         out = (r.stdout or "") + (r.stderr or "")
         if check and r.returncode != 0:
@@ -474,8 +482,12 @@ def _pythonw() -> str:
 
 
 def _task_cmd() -> str:
-    """计划任务要执行的命令。用 pythonw 免得每 30 分钟闪一个黑框。"""
-    return f'cmd /c ""{_pythonw()}" "{BASE_DIR / "timelog.py"}" sync run --quiet"'
+    """计划任务要执行的命令。
+
+    **不要用 cmd /c 包一层** —— cmd 是控制台程序，会弹窗抢焦点（每 30 分钟抢一次）。
+    直接跑 pythonw.exe：它没有控制台，既不闪窗也不会抢焦点。
+    """
+    return f'"{_pythonw()}" "{BASE_DIR / "timelog.py"}" sync run --quiet'
 
 
 def _schtasks(*args: str) -> tuple[int, str]:

@@ -163,6 +163,29 @@ def visible(segs: list[dict]) -> list[dict]:
     return [s for s in segs if s["kind"] in ("window", "idle") and s["end"] - s["start"] >= 1]
 
 
+def ignored_apps() -> set[str]:
+    """不计入统计的应用（config.json 的 ignore_apps）。
+
+    采集时已经跳过它们了，但**历史数据**里可能还有（配置是后加的），
+    所以出报告时再过滤一次 —— 改一下配置，老数据立刻也干净了。
+    """
+    try:
+        from config import load_config
+
+        return {str(a).lower() for a in load_config().get("ignore_apps", []) if a}
+    except Exception:
+        return set()
+
+
+def visible_for_stats(segs: list[dict], ignore: set[str] | None = None) -> list[dict]:
+    """真正参与统计的段：去掉占位段，再去掉被忽略的应用（悬浮工具之类）。"""
+    ign = ignored_apps() if ignore is None else ignore
+    return [
+        s for s in visible(segs)
+        if s["kind"] == "idle" or (s.get("app") or "").lower() not in ign
+    ]
+
+
 def segments_for_range(store, start_date: dt.date, end_date: dt.date, now_ts: float | None = None):
     """取区间内的时间段（多读前后各一天，保证跨天边界正确）。"""
     recs = store.read_range(start_date - dt.timedelta(days=1), end_date + dt.timedelta(days=1))
@@ -196,7 +219,7 @@ def summarize(segs: list[dict]) -> dict:
         if run_app and (upto - run_start) > longest[2]:
             longest = (run_app, "", upto - run_start)
 
-    for s in visible(segs):
+    for s in visible_for_stats(segs):
         dur = s["end"] - s["start"]
         tail_end = max(tail_end, s["end"])
         if s["kind"] == "idle":
@@ -242,7 +265,7 @@ def manual_entries(store, start_date: dt.date, end_date: dt.date) -> list[dict]:
 
 def hour_histogram(segs: list[dict]) -> list[float]:
     buckets = [0.0] * 24
-    for s in visible(segs):
+    for s in visible_for_stats(segs):
         if s["kind"] != "window":
             continue
         t0 = dt.datetime.fromtimestamp(s["start"])
@@ -469,7 +492,7 @@ def render_daily(store, day: dt.date, segs: list[dict], manual: list[dict], now:
 
     L.append("## 四、时间线")
     L.append("")
-    vis = visible(segs)
+    vis = visible_for_stats(segs)
     if vis:
         L.append("| 时段 | 应用 | 窗口标题 | 时长 | 设备 |")
         L.append("|---|---|---|---|---|")

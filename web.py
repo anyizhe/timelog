@@ -54,7 +54,7 @@ def _seg_payload(segs) -> list[dict]:
             "mname": s.get("mname", ""),
             "seconds": s["end"] - s["start"],
         }
-        for s in R.visible(segs)
+        for s in R.visible_for_stats(segs)
     ]
 
 
