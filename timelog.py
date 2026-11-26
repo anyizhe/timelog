@@ -357,7 +357,14 @@ def cmd_report(args) -> int:
 def cmd_autostart(args) -> int:
     import winreg
 
-    cmdline = f'"{pythonw()}" "{BASE_DIR / "timelog.py"}" start'
+    from shortcut import in_temp_dir
+
+    if in_temp_dir():
+        print("这是临时目录里的副本，不装开机自启。")
+        print("（免得注册表指向会被系统清理的路径，采集就悄悄失效了）")
+        return 1
+
+    cmdline = f'"{pythonw()}" "{BASE_DIR / "timelog.py"}" start --bg'
     try:
         key = winreg.OpenKey(winreg.HKEY_CURRENT_USER, RUN_KEY, 0, winreg.KEY_ALL_ACCESS)
     except FileNotFoundError:

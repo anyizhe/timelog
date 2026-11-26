@@ -502,6 +502,15 @@ def install_task(minutes: int = 30) -> tuple[bool, str]:
     """
     cmd = _task_cmd()
     out = []
+
+    from shortcut import in_temp_dir
+
+    if in_temp_dir():
+        return False, (
+            "这是临时目录里的副本，不装自动同步。\n"
+            "（免得计划任务指向会被系统清理的路径，采集和同步就悄悄失效了）"
+        )
+
     code, msg = _schtasks(
         "/create", "/tn", TASK_MINUTE, "/tr", cmd, "/sc", "minute", "/mo", str(minutes), "/f"
     )

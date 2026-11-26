@@ -1,11 +1,30 @@
 """桌面快捷方式（用 PowerShell 的 WScript.Shell COM，不依赖 pywin32）。"""
 from __future__ import annotations
 
+import os
 import subprocess
 import sys
 from pathlib import Path
 
 BASE_DIR = Path(__file__).resolve().parent
+
+
+def in_temp_dir(path: Path | None = None) -> bool:
+    """这个路径是不是在系统临时目录里。
+
+    自测时会在 %TEMP% 下 clone 一份代码来跑 —— **绝不能**把开机自启、
+    计划任务、桌面快捷方式指向临时目录，否则临时目录被清理后，
+    用户的采集器和同步就悄悄失效了（这个坑踩过）。
+    """
+    p = Path(path or BASE_DIR)
+    temp = os.environ.get("TEMP") or os.environ.get("TMP")
+    if not temp:
+        return False
+    try:
+        p.resolve().relative_to(Path(temp).resolve())
+        return True
+    except ValueError:
+        return False
 
 PS_TEMPLATE = r"""
 $ErrorActionPreference = 'Stop'
@@ -54,6 +73,8 @@ def create_desktop_shortcut(
         icon=icon or str(BASE_DIR / "clock.ico"),
         desc=desc,
     )
+    if in_temp_dir():
+        return False, "这是临时目录里的副本，不建桌面快捷方式（免得指到会被清理的路径）"
     try:
         r = subprocess.run(
             ["powershell", "-NoProfile", "-ExecutionPolicy", "Bypass", "-Command", ps],
