@@ -111,13 +111,13 @@ def push_via_api(repo_name: str = "timelog") -> tuple[bool, str]:
     owner = me.get("login", "anyizhe")
 
     files = [
-        "timelog.py", "collector.py", "store.py", "report.py", "config.py", "config.json",
+        "timelog.py", "collector.py", "store.py", "report.py", "config.py", "config.example.json",
         "web.py", "machine.py", "sync.py", "sync_api.py", "publish.py", "setup.py",
         "shortcut.py", "join.py",
         "ui/index.html",
         "tests/selftest.py", "tests/selftest_sync.py", "tests/selftest_api.py",
         "tests/selftest_join.py",
-        "README.md", "clock.ico", ".gitignore",
+        "README.md", "clock.ico", ".gitignore", "config.example.json",
         "start.bat", "stop.bat", "report.bat", "open-web.bat", "autostart.bat",
         "sync.bat", "publish.bat", "setup.bat", "update.bat",
     ]
@@ -226,24 +226,28 @@ def main() -> int:
     print()
     print("正在推送……第一次会弹出浏览器让你登录 GitHub，登录一次就好。")
     code, out = 1, ""
-    for attempt in range(4):
+    for attempt in range(3):
         code, out = git("push", "-u", "origin", "main")
         if code == 0:
             break
         last = out.strip().splitlines()[-1] if out.strip() else ""
         print(f"  第 {attempt + 1} 次失败：{last[:110]}")
-        if attempt < 3:
+        if attempt < 2:
             import time
 
             time.sleep(5 * (attempt + 1))
     if code != 0:
-        print("推送失败：\n" + out.strip())
-        print()
-        print("常见原因：")
-        print("  · 仓库不存在或名字不对 —— 先在 GitHub 上建一个")
-        print("  · 仓库不是空的 —— 建的时候不要勾 README")
-        print("  · 登录过期 —— 重跑一次，会重新弹登录")
-        return 1
+        print("  git 端口不通，改用 API 通道再试一次……")
+        ok, msg = push_via_api()
+        print(("OK " if ok else "FAIL ") + msg)
+        if not ok:
+            print("推送失败：\n" + out.strip())
+            print()
+            print("常见原因：")
+            print("  · 仓库不存在或名字不对 —— 先在 GitHub 上建一个")
+            print("  · 仓库不是空的 —— 建的时候不要勾 README")
+            print("  · 登录过期 —— 重跑一次，会重新弹登录")
+            return 1
 
     print()
     print("推送成功 ✓")

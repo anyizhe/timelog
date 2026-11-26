@@ -15,7 +15,9 @@
     "银行卡",
     "私钥"
   ],
-  "ignore_apps": [],
+  "ignore_apps": [
+    "shortcutdock.exe"
+  ],
   "hide_apps": [],
   "skip_window_classes": [
     "progman",
