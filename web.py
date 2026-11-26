@@ -19,6 +19,7 @@ import json
 import os
 import socket
 import sys
+import time
 import urllib.request
 import webbrowser
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -77,8 +78,14 @@ def _apps_payload(summ: dict) -> list[dict]:
 
 
 def _titles_payload(summ: dict) -> list[dict]:
+    tm = summ.get("title_machines", {})
     return [
-        {"title": t, "app": a, "seconds": d}
+        {
+            "title": t,
+            "app": a,
+            "seconds": d,
+            "machines": tm.get((a, t), []),
+        }
         for (a, t), d in sorted(summ["titles"].items(), key=lambda kv: -kv[1])
         if t
     ]
@@ -417,6 +424,15 @@ def _serve(port: int, no_browser: bool) -> int:
     url = f"http://127.0.0.1:{port}"
     print(f"时间记录看板：{url}")
     print("关闭这个命令行窗口即可停止看板（数据采集不受影响）")
+
+    # 记下自己的 pid，更新代码后要能把它重启掉
+    pid_file = BASE_DIR / "data" / "web.pid"
+    try:
+        pid_file.parent.mkdir(parents=True, exist_ok=True)
+        pid_file.write_text(str(os.getpid()), encoding="utf-8")
+    except OSError:
+        pid_file = None
+
     if not no_browser:
         threading_timer = __import__("threading").Timer(0.8, open_browser, args=(url,))
         threading_timer.daemon = True
@@ -432,7 +448,31 @@ def _serve(port: int, no_browser: bool) -> int:
         print("\n看板已停止")
     finally:
         server.server_close()
+        if pid_file and pid_file.exists():
+            try:
+                pid_file.unlink()
+            except OSError:
+                pass
     return 0
+
+
+def restart_dashboard(port: int = DEFAULT_PORT) -> tuple[bool, str]:
+    """把正在跑的看板停掉（更新代码后用）。"""
+    pid_file = BASE_DIR / "data" / "web.pid"
+    killed = False
+    if pid_file.exists():
+        try:
+            pid = int(pid_file.read_text(encoding="utf-8").strip())
+            os.kill(pid, 15)
+            killed = True
+            time.sleep(1)
+        except Exception:
+            pass
+        try:
+            pid_file.unlink()
+        except OSError:
+            pass
+    return killed, "旧看板已停" if killed else "没有正在运行的看板"
 
 
 if __name__ == "__main__":

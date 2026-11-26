@@ -11,6 +11,10 @@ import datetime as dt
 import time
 from pathlib import Path
 
+# 采集器每 120 秒写一次心跳（config.json 的 heartbeat_seconds）。
+# 用来给"每台机器的最后一个段"封顶，防止旧快照造出几小时的幽灵段。
+HEARTBEAT_PAD = 120
+
 # ---------------------------------------------------------------- 时间线构建
 
 
@@ -48,8 +52,10 @@ def _build_one_machine(recs: list[dict], now_ts: float) -> list[dict]:
         app = rec.get("app", "") or ""
         title = rec.get("title", "") or ""
         key = (kind, app, title)
+        t = rec.get("t", 0.0)
         if groups and groups[-1]["key"] == key:
             groups[-1]["n"] += 1
+            groups[-1]["last_t"] = t
             continue
         groups.append(
             {
@@ -59,14 +65,23 @@ def _build_one_machine(recs: list[dict], now_ts: float) -> list[dict]:
                 "title": title,
                 "machine": rec.get("m", "") or "",
                 "mname": rec.get("mn", "") or rec.get("m", "") or "",
-                "t": rec.get("t", 0.0),
+                "t": t,
+                "last_t": t,
                 "n": 1,
             }
         )
     segs: list[dict] = []
     for i, g in enumerate(groups):
         start = g["t"]
-        end = groups[i + 1]["t"] if i + 1 < len(groups) else now_ts
+        if i + 1 < len(groups):
+            end = groups[i + 1]["t"]
+        else:
+            # 最后一个段**不能无限延伸到"现在"**。
+            # 这台机器的数据流可能早就断了（比如另一台电脑拉到的是一份旧快照），
+            # 无脑延伸到 now 会凭空造出"用了一整夜"的幽灵段。
+            # 最多再宽限一个心跳周期 —— 采集器每 120 秒写一次心跳，
+            # 所以"最后一次有动静"之后顶多也就再宽限这么久。
+            end = min(now_ts, g["last_t"] + HEARTBEAT_PAD)
         if end < start:
             end = start
         segs.append(
@@ -164,6 +179,7 @@ def segments_for_range(store, start_date: dt.date, end_date: dt.date, now_ts: fl
 def summarize(segs: list[dict]) -> dict:
     apps: dict[str, float] = {}
     titles: dict[tuple[str, str], float] = {}
+    title_machines: dict[tuple[str, str], list[str]] = {}
     by_machine: dict[str, float] = {}
     by_app_machine: dict[tuple[str, str], float] = {}
     idle = 0.0
@@ -192,6 +208,9 @@ def summarize(segs: list[dict]) -> dict:
         apps[s["app"]] = apps.get(s["app"], 0.0) + dur
         titles[(s["app"], s["title"])] = titles.get((s["app"], s["title"]), 0.0) + dur
         mname = s.get("mname") or s.get("machine") or "未标记"
+        tm = title_machines.setdefault((s["app"], s["title"]), [])
+        if mname not in tm:
+            tm.append(mname)
         by_machine[mname] = by_machine.get(mname, 0.0) + dur
         k = (s["app"], mname)
         by_app_machine[k] = by_app_machine.get(k, 0.0) + dur
@@ -206,6 +225,7 @@ def summarize(segs: list[dict]) -> dict:
     return {
         "apps": apps,
         "titles": titles,
+        "title_machines": title_machines,
         "idle": idle,
         "window": window,
         "switches": switches,
@@ -305,15 +325,16 @@ def _pct(x: float, total: float) -> str:
     return f"{x / total * 100:.0f}%"
 
 
-def _titles_table(titles: dict, limit: int = 20) -> list[str]:
-    """「我今天到底碰了哪些东西」——按停留时长排的窗口标题清单。"""
+def _titles_table(titles: dict, title_machines: dict | None = None, limit: int = 20) -> list[str]:
+    """「我今天到底碰了哪些东西」——按停留时长排的窗口标题清单，带设备来源。"""
     items = sorted(titles.items(), key=lambda kv: -kv[1])
-    lines = ["| 窗口标题 | 应用 | 时长 |", "|---|---|---|"]
+    lines = ["| 窗口标题 | 应用 | 设备 | 时长 |", "|---|---|---|---|"]
     n = 0
     for (app, title), sec in items:
         if not title:
             continue
-        lines.append(f"| {title} | {app} | {fmt_dur(sec)} |")
+        devs = "、".join((title_machines or {}).get((app, title), [])) or "—"
+        lines.append(f"| {title} | {app} | {devs} | {fmt_dur(sec)} |")
         n += 1
         if n >= limit:
             break
@@ -439,7 +460,7 @@ def render_daily(store, day: dt.date, segs: list[dict], manual: list[dict], now:
     L.append("## 三、今天碰到的东西")
     L.append("")
     if summ["titles"]:
-        L.extend(_titles_table(summ["titles"]))
+        L.extend(_titles_table(summ["titles"], summ.get("title_machines")))
         L.append("")
         L.append("_（按停留时长排序；同一件事中途切走再回来会合并成一条）_")
     else:
@@ -449,22 +470,16 @@ def render_daily(store, day: dt.date, segs: list[dict], manual: list[dict], now:
     L.append("## 四、时间线")
     L.append("")
     vis = visible(segs)
-    multi = len(summ["by_machine"]) > 1
     if vis:
-        if multi:
-            L.append("| 时段 | 设备 | 应用 | 窗口标题 | 时长 |")
-            L.append("|---|---|---|---|---|")
-        else:
-            L.append("| 时段 | 应用 | 窗口标题 | 时长 |")
-            L.append("|---|---|---|---|")
+        L.append("| 时段 | 应用 | 窗口标题 | 时长 | 设备 |")
+        L.append("|---|---|---|---|---|")
         for s in vis:
             app = "（空闲）" if s["kind"] == "idle" else s["app"]
             title = "—" if s["kind"] == "idle" else (s["title"] or "—")
-            row = f"| {fmt_time(s['start'])}–{fmt_time(s['end'])} | "
-            if multi:
-                row += f"{s.get('mname') or '未标记'} | "
-            row += f"{app} | {title} | {fmt_dur(s['end']-s['start'])} |"
-            L.append(row)
+            L.append(
+                f"| {fmt_time(s['start'])}–{fmt_time(s['end'])} | {app} | {title} | "
+                f"{fmt_dur(s['end']-s['start'])} | {s.get('mname') or '未标记'} |"
+            )
     else:
         L.append("_当天没有时间线数据。_")
     L.append("")
@@ -562,7 +577,7 @@ def render_weekly(store, start: dt.date, end: dt.date, manual: list[dict], now: 
     L.append("## 四、本周碰到的东西")
     L.append("")
     if week_summ["titles"]:
-        L.extend(_titles_table(week_summ["titles"], limit=25))
+        L.extend(_titles_table(week_summ["titles"], week_summ.get("title_machines"), limit=25))
         L.append("")
         L.append("_（按停留时长排序；同一件事中途切走再回来会合并成一条）_")
     else:

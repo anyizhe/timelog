@@ -327,7 +327,10 @@ def _run_locked(store, repo, cfg, dry_run: bool) -> tuple[bool, str]:
     mine_id = store.machine["id"]
 
     # 1) 本地 → 仓库
-    local_files = sorted(store.data_dir.glob(DATA_GLOB))
+    # **只推自己那台机器的文件**。把别的机器的文件也推上去的话，
+    # 一旦本地那份是旧快照，就会把仓库里更新的版本覆盖掉（数据丢失）。
+    mine_suffix = f".{store.machine['id']}.jsonl"
+    local_files = [f for f in sorted(store.data_dir.glob(DATA_GLOB)) if f.name.endswith(mine_suffix)]
     copied = 0
     for f in local_files:
         dst = repo / f.name

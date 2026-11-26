@@ -97,6 +97,8 @@ td.num{text-align:right;font-variant-numeric:tabular-nums;white-space:nowrap}
 .tl .ap{font-size:12.5px;flex:none;max-width:170px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .tl .ti{flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:#c3cbdb}
 .tl .du{flex:none;color:var(--dim);font-size:12px;font-variant-numeric:tabular-nums}
+.tl .dev{margin-left:auto;flex:none;font-size:11px;opacity:.85}
+.tag.dev{background:rgba(91,156,255,.12);border-color:rgba(91,156,255,.35);color:#9dc2ff}
 
 /* 观察 */
 ul.notes{margin:0;padding-left:18px;color:#c3cbdb}
@@ -397,23 +399,24 @@ async function loadDay(){
   const tt = $('#todayTitles');
   if(!d.titles.length){ tt.innerHTML='<div class="empty">还没有采集到窗口标题</div>'; }
   else{
-    tt.innerHTML='<table><thead><tr><th>窗口标题</th><th>应用</th><th style="text-align:right">时长</th></tr></thead><tbody>'+
+    tt.innerHTML='<table><thead><tr><th>窗口标题</th><th>应用</th><th>设备</th><th style="text-align:right">时长</th></tr></thead><tbody>'+
       d.titles.slice(0,30).map(t=>'<tr><td class="titlecell" title="'+esc(t.title)+'">'+esc(t.title)+'</td>'+
-      '<td><span class="tag">'+esc(t.app)+'</span></td><td class="num">'+dur(t.seconds)+'</td></tr>').join('')+
+      '<td><span class="tag">'+esc(t.app)+'</span></td>'+
+      '<td><span class="tag dev">'+esc((t.machines&&t.machines.length?t.machines.join('、'):'未标记'))+'</span></td>'+
+      '<td class="num">'+dur(t.seconds)+'</td></tr>').join('')+
       '</tbody></table>';
   }
 
   const tl = $('#todayTimeline');
   if(!d.segments.length){ tl.innerHTML='<div class="empty">还没有时间线数据</div>'; }
   else{
-    const multi = machCount>1;
     tl.innerHTML='<ul class="tl">'+d.segments.map(s=>
       '<li style="border-left-color:'+(s.kind==='idle'?'#3a4356':appColor(s.app))+'">'+
       '<span class="tm">'+hm(s.start)+'–'+hm(s.end)+'</span>'+
-      (multi?'<span class="tag">'+esc(s.mname||'未标记')+'</span>':'')+
       '<span class="ap" style="color:'+(s.kind==='idle'?'var(--dim2)':appColor(s.app))+'">'+esc(s.kind==='idle'?'（空闲）':s.app)+'</span>'+
       '<span class="ti">'+esc(s.title||'—')+'</span>'+
-      '<span class="du">'+durShort(s.seconds)+'</span></li>').join('')+'</ul>';
+      '<span class="du">'+durShort(s.seconds)+'</span>'+
+      '<span class="tag dev">'+esc(s.mname||'未标记')+'</span></li>').join('')+'</ul>';
   }
 
   const mn = $('#todayManual');

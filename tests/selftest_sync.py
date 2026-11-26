@@ -223,6 +223,36 @@ def test_sync_roundtrip():
     check("日报含两台设备名", "台式机" in md and "笔记本" in md)
 
 
+def test_stale_snapshot_no_phantom():
+    print("\n[6] 旧快照不能造出几小时的幽灵段")
+    # 场景：另一台电脑拿到的是一份很旧的快照（最后一条事件在 00:26），
+    # 但现在已经是 08:10。如果最后一段无限延伸到"现在"，就会显示
+    # "00:26–08:10 一直在用 Chrome" —— 实际上那段时间根本没有任何数据。
+    d = use_machine(20, "旧快照机", "cccccc")
+    write_events(d / "data", "2026-11-26.cccccc.jsonl", "cccccc", "旧快照机", [
+        (dt.datetime(2026, 11, 26, 0, 20), {"kind": "window", "app": "Chrome.exe", "title": "看板"}),
+        (dt.datetime(2026, 11, 26, 0, 26), {"kind": "window", "app": "Chrome.exe", "title": "看板"}),
+    ])
+    os.environ["TIMELOG_DATA_DIR"] = str(d / "data")
+    from report import build_segments
+
+    recs = []
+    for f in sorted((d / "data").glob("*.jsonl")):
+        for line in f.read_text(encoding="utf-8").splitlines():
+            if line.strip():
+                recs.append(json.loads(line))
+    now = dt.datetime(2026, 11, 26, 8, 10).timestamp()
+    segs = build_segments(recs, now)
+    last = max(segs, key=lambda s: s["end"])
+    span = last["end"] - last["start"]
+    snapshot_end = dt.datetime(2026, 11, 26, 0, 26).timestamp()
+    check("最后一段没有延伸到 8 小时", span < 3600, f"实际跨度 {span/3600:.1f} 小时")
+    check("最后一段的终点只比快照末尾晚一个心跳周期（≤120 秒）",
+          last["end"] - snapshot_end <= 121, f"终点晚了 {last['end'] - snapshot_end:.0f} 秒")
+    check("最后一段的终点没有跑到'现在'",
+          abs(last["end"] - now) > 3600, f"终点 {dt.datetime.fromtimestamp(last['end'])}")
+
+
 def main() -> int:
     print("多机合并 + 同步自测")
     print(f"沙箱：{SANDBOX}")
@@ -231,6 +261,7 @@ def main() -> int:
     test_end_marker_does_not_truncate()
     test_manual_not_truncated()
     test_sync_roundtrip()
+    test_stale_snapshot_no_phantom()
     print("\n" + ("全部通过 ✅" if not FAILED else f"失败 {len(FAILED)} 项: {FAILED}"))
     shutil.rmtree(SANDBOX, ignore_errors=True)
     return 1 if FAILED else 0

@@ -223,6 +223,18 @@ def cmd_web(args) -> int:
     """启动本地网页看板。"""
     import web as web_mod
 
+    if getattr(args, "restart", False):
+        ok, msg = web_mod.restart_dashboard()
+        print(msg)
+        flags = 0x08000000 | 0x00000008  # CREATE_NO_WINDOW | DETACHED_PROCESS
+        subprocess.Popen(
+            [pythonw(), str(BASE_DIR / "web.py"), "--port", str(args.port or 8765)],
+            creationflags=flags, stdin=subprocess.DEVNULL,
+            stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, cwd=str(BASE_DIR),
+        )
+        print(f"看板已重新拉起：http://127.0.0.1:{args.port or 8765}")
+        return 0
+
     argv = []
     if args.port:
         argv += ["--port", str(args.port)]
@@ -464,6 +476,7 @@ def main(argv=None) -> int:
     s = sub.add_parser("web", help="打开本地网页看板")
     s.add_argument("--port", type=int, help="端口（默认 8765）")
     s.add_argument("--no-browser", action="store_true", help="不自动开浏览器")
+    s.add_argument("--restart", action="store_true", help="重启看板（更新代码后用）")
     s.set_defaults(func=cmd_web)
 
     s = sub.add_parser("sync", help="跨机器数据同步（GitHub 私有数据仓）")

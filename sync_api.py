@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import base64
 import datetime as dt
+import hashlib
 import json
 import subprocess
 import time
@@ -21,6 +22,11 @@ from pathlib import Path
 
 API = "https://api.github.com"
 UA = "timelog"
+
+
+def _blob_sha(data: bytes) -> str:
+    """算 git blob 的 sha1 —— 跟 GitHub API 返回的 sha 是同一种算法。"""
+    return hashlib.sha1(b"blob %d\0" % len(data) + data).hexdigest()
 
 
 # ---------------------------------------------------------------- 凭据
@@ -191,12 +197,21 @@ def run(store, dry_run: bool = False) -> tuple[bool, str]:
         return {x["name"]: x for x in listing if x.get("name", "").endswith(".jsonl")}
 
     def pull_new(remote: dict) -> int:
-        """把远端有、本地没有的文件拉回来。"""
+        """把远端版本拉回来。
+
+        远端对**别的机器**的文件是权威的，所以本地那份不一样就要覆盖 ——
+        只补"本地没有的文件"会让另一台电脑永远停在上次拉取时的旧快照
+        （这坑踩过：主机上的「球球」数据卡在 00:26 不动了）。
+        用远端给的 git blob sha 跟本地算的比，只在真的不一样时才下载。
+        """
         got = 0
-        for name in remote:
+        for name, meta in remote.items():
             dst = store.data_dir / name
-            if dst.exists():
-                continue
+            if name.endswith(f".{store.machine['id']}.jsonl"):
+                continue  # 自己那份走后面的合并逻辑
+            rsha = meta.get("sha")
+            if dst.exists() and rsha and _blob_sha(dst.read_bytes()) == rsha:
+                continue  # 内容一致，不用下
             if dry_run:
                 got += 1
                 continue
