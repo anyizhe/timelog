@@ -79,6 +79,8 @@ nav button.on{color:var(--fg);border-bottom-color:var(--accent);font-weight:600}
 .barrow .tr{flex:1;height:9px;background:#0a0d13;border-radius:5px;overflow:hidden}
 .barrow .fl{height:100%;border-radius:5px;background:var(--accent);transition:width .3s}
 .barrow .vl{width:74px;flex:none;text-align:right;font-size:12.5px;color:var(--dim);font-variant-numeric:tabular-nums}
+.barrow.clickable{cursor:pointer;border-radius:7px;padding:2px 6px;margin-left:-6px;margin-right:-6px}
+.barrow.clickable:hover{background:rgba(91,156,255,.09)}
 
 /* 表格 */
 table{width:100%;border-collapse:collapse;font-size:13px}
@@ -161,14 +163,23 @@ label.fl{font-size:12.5px;color:var(--dim);display:flex;align-items:center;gap:6
 <div class="wrap">
 
   <nav>
-    <button data-tab="today" class="on">今日</button>
+    <button data-tab="day" class="on">今日</button>
     <button data-tab="week">本周</button>
     <button data-tab="report">报告</button>
     <button data-tab="settings">设置</button>
   </nav>
 
-  <!-- ============ 今日 ============ -->
-  <section id="tab-today">
+  <!-- ============ 某一天 ============ -->
+  <section id="tab-day">
+    <div class="card" style="display:flex;align-items:center;gap:10px;flex-wrap:wrap">
+      <button class="sm" id="dayPrev">‹ 前一天</button>
+      <input type="date" id="dayPicker" style="width:150px">
+      <button class="sm" id="dayNext">后一天 ›</button>
+      <button class="sm" id="dayToday">回到今天</button>
+      <div class="spacer"></div>
+      <span class="mono" id="dayLabel"></span>
+    </div>
+
     <div class="card">
       <h3>手动补一条</h3>
       <div class="form">
@@ -358,16 +369,25 @@ async function toggleCollector(action){
     const r = await api('/api/collector/'+action, {method:'POST', body:'{}'});
     toast(r.message||'ok');
     await loadStatus();
-    if(current==='today') loadDay();
+    if(current==='day') loadDay();
   }catch(e){ toast(e.message,true); }
 }
 
 /* ---------- 今日 ---------- */
-let todayDate = new Date();
+let selectedDay = new Date();
+function ymd(d){ return d.getFullYear()+'-'+String(d.getMonth()+1).padStart(2,'0')+'-'+String(d.getDate()).padStart(2,'0'); }
+function shiftDay(n){ const d=new Date(selectedDay); d.setDate(d.getDate()+n); return d; }
 async function loadDay(){
-  const ds = todayDate.toISOString().slice(0,10);
+  const ds = ymd(selectedDay);
   let d;
   try{ d = await api('/api/day?date='+ds); }catch(e){ toast(e.message,true); return; }
+  $('#dayPicker').value = ds;
+  const todayStr = ymd(new Date());
+  const dayLabel = d.is_today ? '今天' : (ds === ymd(shiftDay(-1)) ? '昨天' : ds);
+  $('#dayLabel').textContent = (dayLabel === ds ? ds : dayLabel + '　' + ds);
+  const navBtn = document.querySelector('nav button[data-tab="day"]');
+  if(navBtn) navBtn.textContent = d.is_today ? '今日' : dayLabel;
+  $('#dayNext').disabled = ds >= todayStr;
 
   const machCount = Object.keys(d.machines||{}).length;
   $('#todayTiles').innerHTML = [
@@ -453,12 +473,20 @@ async function loadWeek(){
 
   const max = Math.max(...d.days.map(x=>x.window), 1);
   $('#weekDays').innerHTML = d.days.map(x=>
-    '<div class="barrow"><div class="nm">'+md(Date.parse(x.date+'T00:00:00')/1000)+' 周'+wd(Date.parse(x.date+'T00:00:00')/1000)+
+    '<div class="barrow clickable" data-date="'+x.date+'"><div class="nm">'+md(Date.parse(x.date+'T00:00:00')/1000)+' 周'+wd(Date.parse(x.date+'T00:00:00')/1000)+
     (x.is_today?' ·今天':'')+(x.is_future?' ·未到':'')+
     (x.machines&&Object.keys(x.machines).length>1?'<div style="font-size:11px;color:var(--dim2)">'+esc(Object.keys(x.machines).join('、'))+'</div>':'')+
     '</div>'+
     '<div class="tr"><div class="fl" style="width:'+(x.window/max*100).toFixed(1)+'%;background:'+(x.is_today?'#7ee3c0':'#5b9cff')+'"></div></div>'+
     '<div class="vl">'+durShort(x.window)+'</div></div>').join('');
+  // 点某一天 → 跳到那天的明细
+  $$('#weekDays .barrow.clickable').forEach(el=>{
+    el.onclick = ()=>{
+      const [y,m,dd] = el.dataset.date.split('-').map(Number);
+      selectedDay = new Date(y, m-1, dd);
+      switchTab('day');
+    };
+  });
 
   const wa = $('#weekApps');
   if(!d.apps.length) wa.innerHTML='<div class="empty">本周还没有采集到活动</div>';
@@ -565,8 +593,8 @@ let current='today';
 function switchTab(t){
   current=t;
   $$('nav button').forEach(b=>b.classList.toggle('on', b.dataset.tab===t));
-  ['today','week','report','settings'].forEach(x=>$('#tab-'+x).classList.toggle('hidden', x!==t));
-  if(t==='today') loadDay();
+  ['day','week','report','settings'].forEach(x=>$('#tab-'+x).classList.toggle('hidden', x!==t));
+  if(t==='day') loadDay();
   if(t==='week') loadWeek();
   if(t==='settings') loadConfig();
 }
@@ -577,12 +605,25 @@ $('#btnStart').onclick = ()=>toggleCollector('start');
 $('#btnStop').onclick = ()=>toggleCollector('stop');
 $('#btnStart2').onclick = ()=>toggleCollector('start');
 $('#btnStop2').onclick = ()=>toggleCollector('stop');
-$('#btnRefresh').onclick = ()=>{ loadStatus(); if(current==='today')loadDay(); if(current==='week')loadWeek(); };
+$('#btnRefresh').onclick = ()=>{ loadStatus(); if(current==='day')loadDay(); if(current==='week')loadWeek(); };
+$('#dayPrev').onclick = ()=>{ selectedDay = shiftDay(-1); loadDay(); };
+$('#dayNext').onclick = ()=>{ selectedDay = shiftDay(1); loadDay(); };
+$('#dayToday').onclick = ()=>{ selectedDay = new Date(); loadDay(); };
+$('#dayPicker').onchange = (e)=>{
+  const v = e.target.value;
+  if(!v) return;
+  const [y,m,dd] = v.split('-').map(Number);
+  selectedDay = new Date(y, m-1, dd);
+  loadDay();
+};
 $('#btnAdd').onclick = async ()=>{
   const note=$('#noteText').value.trim();
   if(!note){ toast('先写点内容',true); return; }
   try{
-    await api('/api/add',{method:'POST',body:JSON.stringify({note,dur:$('#noteDur').value.trim(),at:$('#noteAt').value.trim()})});
+    // 浏览历史日期时补记，时间要落在**那一天**，而不是今天
+    const ds = ymd(selectedDay);
+    const tm = $('#noteAt').value.trim() || new Date().toTimeString().slice(0,5);
+    await api('/api/add',{method:'POST',body:JSON.stringify({note,dur:$('#noteDur').value.trim(),at:ds+' '+tm})});
     $('#noteText').value=''; $('#noteDur').value=''; $('#noteAt').value='';
     toast('记下了');
     loadDay();
@@ -592,6 +633,12 @@ $('#noteText').addEventListener('keydown',e=>{ if(e.key==='Enter') $('#btnAdd').
 $('#weekPrev').onclick = ()=>{ weekOffset--; loadWeek(); };
 $('#weekNext').onclick = ()=>{ weekOffset++; loadWeek(); };
 $('#btnGenReport').onclick = genReport;
+// 切到报告页时，日期跟着当前浏览的那天走
+$$('nav button').forEach(b=>{
+  if(b.dataset.tab==='report'){
+    b.addEventListener('click',()=>{ $('#reportDate').value = ymd(selectedDay); });
+  }
+});
 $('#btnCopyReport').onclick = async ()=>{
   const md = $('#reportBody')._md || '';
   if(!md){ toast('先生成报告',true); return; }
@@ -602,10 +649,10 @@ $('#btnSaveCfg').onclick = saveConfig;
 $('#btnReloadCfg').onclick = loadConfig;
 
 /* ---------- 启动 ---------- */
-$('#reportDate').value = new Date().toISOString().slice(0,10);
+$('#reportDate').value = ymd(new Date());
 loadStatus();
 loadDay();
-setInterval(()=>{ loadStatus(); if(current==='today') loadDay(); }, 15000);
+setInterval(()=>{ loadStatus(); if(current==='day') loadDay(); }, 15000);
 </script>
 </body>
 </html>
