@@ -122,7 +122,17 @@ def main() -> int:
 
     print()
     print("正在推送……第一次会弹出浏览器让你登录 GitHub，登录一次就好。")
-    code, out = git("push", "-u", "origin", "main")
+    code, out = 1, ""
+    for attempt in range(4):
+        code, out = git("push", "-u", "origin", "main")
+        if code == 0:
+            break
+        last = out.strip().splitlines()[-1] if out.strip() else ""
+        print(f"  第 {attempt + 1} 次失败：{last[:110]}")
+        if attempt < 3:
+            import time
+
+            time.sleep(5 * (attempt + 1))
     if code != 0:
         print("推送失败：\n" + out.strip())
         print()
