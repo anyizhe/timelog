@@ -23,7 +23,7 @@ def git(*args: str, cwd: Path = BASE_DIR) -> tuple[int, str]:
     try:
         r = subprocess.run(
             ["git", *args], cwd=str(cwd), capture_output=True, text=True,
-            encoding="utf-8", errors="replace",
+            encoding="utf-8", errors="replace", stdin=subprocess.DEVNULL,
         )
         return r.returncode, (r.stdout or "") + (r.stderr or "")
     except FileNotFoundError:
@@ -56,9 +56,112 @@ def ensure_identity() -> bool:
     return True
 
 
+# ---------------------------------------------------------------- API 兜底通道
+
+
+def _token() -> str:
+    payload = "protocol=https\nhost=github.com\nusername=anyizhe\n\n"
+    r = subprocess.run(
+        ["git", "credential", "fill"], input=payload, capture_output=True, text=True,
+        encoding="utf-8", errors="replace",
+    )
+    for line in (r.stdout or "").splitlines():
+        if line.startswith("password="):
+            return line.split("=", 1)[1].strip()
+    return ""
+
+
+def _api(method: str, path: str, tok: str, body: dict | None = None):
+    import urllib.error
+    import urllib.request
+
+    data = json.dumps(body).encode("utf-8") if body is not None else None
+    req = urllib.request.Request(f"https://api.github.com{path}", data=data, method=method)
+    req.add_header("Authorization", f"Bearer {tok}")
+    req.add_header("User-Agent", "timelog")
+    req.add_header("Accept", "application/vnd.github+json")
+    if data:
+        req.add_header("Content-Type", "application/json")
+    try:
+        with urllib.request.urlopen(req, timeout=40) as r:
+            raw = r.read().decode("utf-8")
+            return r.status, (json.loads(raw) if raw else {})
+    except urllib.error.HTTPError as e:
+        raw = e.read().decode("utf-8", errors="replace")
+        try:
+            return e.code, json.loads(raw)
+        except Exception:
+            return e.code, {"raw": raw[:300]}
+
+
+def push_via_api(repo_name: str = "timelog") -> tuple[bool, str]:
+    """git 端口不通时的兜底：直接用 REST API 传文件。
+
+    每次 PUT 一个文件就是一个 commit，所以版本历史照样有。
+    """
+    import base64
+    import hashlib
+
+    tok = _token()
+    if not tok:
+        return False, "没有 GitHub 凭据"
+    code, me = _api("GET", "/user", tok)
+    if code != 200:
+        return False, f"认证失败 {code}"
+    owner = me.get("login", "anyizhe")
+
+    files = [
+        "timelog.py", "collector.py", "store.py", "report.py", "config.py", "config.json",
+        "web.py", "machine.py", "sync.py", "sync_api.py", "publish.py", "setup.py",
+        "shortcut.py", "join.py",
+        "ui/index.html",
+        "tests/selftest.py", "tests/selftest_sync.py", "tests/selftest_api.py",
+        "tests/selftest_join.py",
+        "README.md", "clock.ico", ".gitignore",
+        "start.bat", "stop.bat", "report.bat", "open-web.bat", "autostart.bat",
+        "sync.bat", "publish.bat", "setup.bat", "update.bat",
+    ]
+
+    def blob_sha(data: bytes) -> str:
+        return hashlib.sha1(b"blob %d\0" % len(data) + data).hexdigest()
+
+    code, listing = _api("GET", f"/repos/{owner}/{repo_name}/git/trees/main?recursive=1", tok)
+    remote = {}
+    if code == 200:
+        for item in listing.get("tree", []):
+            if item.get("type") == "blob":
+                remote[item["path"]] = item.get("sha")
+
+    ok = 0
+    failed: list[str] = []
+    for name in files:
+        p = BASE_DIR / name
+        if not p.exists():
+            continue
+        data = p.read_bytes()
+        if remote.get(name) == blob_sha(data):
+            continue
+        body = {
+            "message": f"publish: {name}",
+            "content": base64.b64encode(data).decode(),
+            "branch": "main",
+        }
+        if name in remote:
+            body["sha"] = remote[name]
+        code, res = _api("PUT", f"/repos/{owner}/{repo_name}/contents/{name}", tok, body)
+        if code in (200, 201):
+            ok += 1
+        else:
+            failed.append(f"{name}({code})")
+    return (not failed), f"API 通道：更新 {ok} 个文件" + (
+        f"，失败：{', '.join(failed)}" if failed else ""
+    )
+
+
 def main() -> int:
     ap = argparse.ArgumentParser(description="把 timelog 发布到 GitHub")
     ap.add_argument("--repo", help="GitHub 仓库地址（https://github.com/用户名/仓库.git）")
+    ap.add_argument("--api", action="store_true", help="直接用 REST API 上传（git 端口不通时用）")
     ap.add_argument("--no-push", action="store_true", help="只本地提交，不推送")
     ap.add_argument("--message", default="", help="提交信息")
     args = ap.parse_args()
