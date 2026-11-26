@@ -108,17 +108,37 @@ def main() -> int:
         if not ok:
             print(msg)
 
-    # ---- 5. 采集器自启 ----
+    # ---- 5. 开机自启 ----
     if sandbox:
         print("· 开机自动记录：沙箱模式，跳过")
     else:
         code, out = sh(sys.executable, str(BASE_DIR / "timelog.py"), "autostart", "install")
         print("· 开机自动记录：" + ("已装" if code == 0 else "没装上，可手动跑 start.bat"))
 
+    # ---- 6. 立刻开始记录 ----
+    # 只注册开机自启是不够的：不手动启动的话，这台电脑当场什么都不记，
+    # 要等下次重启才生效（这坑踩过：新机器接入后半天没数据）。
+    if sandbox:
+        print("· 采集器：沙箱模式，跳过")
+    else:
+        code, out = sh(sys.executable, str(BASE_DIR / "timelog.py"), "start", "--bg")
+        started = code == 0
+        print("· 采集器：" + ("已经在记了" if started else "没启动成功"))
+        if not started:
+            print("  " + (out.strip().splitlines()[-1] if out.strip() else ""))
+
+        # ---- 7. 启动后再同步一次，把刚记上的数据推上去 ----
+        if started:
+            ok2, msg2 = sync.run(store)
+            print("· 启动后同步：" + ("成功" if ok2 else "失败"))
+            if not ok2:
+                print("  " + msg2.replace("\n", "\n  "))
+
     print()
     print("=" * 58)
     print(" 接入完成。接下来：")
-    print("   python timelog.py start --bg    立刻开始记录")
+    print("   python timelog.py start --bg    开始记录（已在跑就忽略）")
+    print("   python timelog.py status       看今天记了多少")
     print("   桌面双击「时间记录看板」           看今天干了啥")
     print("=" * 58)
     print()

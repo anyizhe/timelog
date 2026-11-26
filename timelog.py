@@ -325,6 +325,21 @@ def cmd_status(args) -> int:
         print(f"已有数据：{len(days)} 天（{days[0]} ~ {days[-1]}）")
     else:
         print("还没有任何采集数据。")
+
+    # 最后一条活动的时间 —— 一眼看出采集器是不是真的在记
+    last = None
+    for rec in store.read_day(dt.date.today()):
+        last = rec.get("ts") or rec.get("t")
+    if last:
+        try:
+            t = dt.datetime.fromisoformat(str(last))
+            ago = (dt.datetime.now() - t).total_seconds()
+            if ago > 1800:
+                print(f"⚠ 最后一条活动是 {t:%H:%M:%S}（{ago/60:.0f} 分钟前）——采集器可能没在跑")
+            else:
+                print(f"最后一条活动：{t:%H:%M:%S}（{ago/60:.0f} 分钟前）")
+        except Exception:
+            pass
     return 0
 
 
